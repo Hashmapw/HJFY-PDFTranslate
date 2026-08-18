@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+	<meta charset="utf-8"/>
+	<title>HJFY-PDFTranslate</title>
+	<style>
+		body { font-size: 13px; line-height: 1.65; }
+		#hjfy-main > h1 { display: none; }
+		#hjfy-main { max-width: 680px; }
+		.hjfy-brand { font-size: 19px; font-weight: 700; margin: 2px 0 2px; }
+		.hjfy-sub { color: #888; font-size: 12px; margin: 0 0 14px; }
+		.divider { border-bottom: 1px solid rgba(127,127,127,.25); margin: 12px 0; }
+		.sec-title { font-weight: 700; font-size: 14px; margin: 14px 0 6px; }
+		.status { font-weight: bold; margin: 8px 0; }
+		.row { margin: 7px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+		label { font-size: 13px; }
+		input[type="text"], input[type="tel"] { padding: 4px 6px; font-size: 13px; width: 200px; box-sizing: border-box; }
+		textarea { width: 100%; min-height: 60px; box-sizing: border-box; font-family: monospace; }
+		button { margin-right: 6px; padding: 3px 12px; font-size: 13px; }
+		.hint { color: #888; font-size: 12px; margin: 5px 0 2px; }
+		details { margin-top: 8px; }
+		details summary { cursor: pointer; color: #555; font-size: 12px; }
+		.mini { color: #999; font-size: 12px; }
+	</style>
+</head>
+<body>
+	<div class="main-section" id="hjfy-main">
+		<div class="hjfy-brand">幻觉翻译 Zotero 版 PDF 翻译</div>
+		<div class="hjfy-sub">HJFY-PDFTranslate · 基于 hjfy.top 的 arXiv / 文档翻译</div>
+		<div class="divider"></div>
+
+		<div class="status" id="hjfy-status">检测中...</div>
+
+		<div class="sec-title">① 微信扫码登录</div>
+		<div class="row">
+			<button id="hjfy-wechat-login">微信扫码登录</button>
+			<span class="mini">弹出二维码，用手机微信扫码并确认</span>
+		</div>
+
+		<div class="sec-title">② 手机号登录</div>
+		<div class="row">
+			<label>手机号</label>
+			<input type="tel" id="hjfy-phone" placeholder="11 位手机号"/>
+			<button id="hjfy-send-code">发送验证码</button>
+			<span class="mini" id="hjfy-send-status"></span>
+		</div>
+		<div class="row">
+			<label>验证码</label>
+			<input type="text" id="hjfy-phone-code" placeholder="短信验证码" maxlength="6"/>
+			<button id="hjfy-phone-login">手机号登录</button>
+		</div>
+		<div class="hint">发送验证码前可能需要先通过网站的人机验证（滑块）：插件会打开 https://hjfy.top/ ，你在网页完成滑块后短信即会发出。</div>
+
+		<details>
+			<summary>高级：粘贴已有会话（从已登录的浏览器复制）</summary>
+			<div class="row" style="margin-top:8px;">
+				<textarea id="hjfy-session-input" placeholder="session=xxxxxx（浏览器登录后 document.cookie 的输出）"></textarea>
+			</div>
+			<div class="row">
+				<button id="hjfy-save">保存并验证</button>
+				<button id="hjfy-verify">验证当前状态</button>
+				<button id="hjfy-openlogin">打开登录页面</button>
+				<button id="hjfy-clear">清除本地会话</button>
+			</div>
+		</details>
+
+		<div class="divider"></div>
+		<div class="sec-title">会话管理</div>
+		<div class="row">
+			<button id="hjfy-logout">退出登录</button>
+			<span class="mini">调用 hjfy.top 退出接口并清除本地保存的会话</span>
+		</div>
+	</div>
+	<script>
+		(function () {
+			function boot() {
+				if (window.Zotero && Zotero.HJFY && typeof Zotero.HJFY.setupPrefs === "function") {
+					Zotero.HJFY.setupPrefs(window);
+				} else {
+					setTimeout(boot, 300);
+				}
+			}
+			window.addEventListener("load", boot);
+		})();
+	</script>
+</body>
+</html>
