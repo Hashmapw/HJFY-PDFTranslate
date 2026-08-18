@@ -210,12 +210,54 @@
 				log("PDFLib 未加载(纯净PDF 将跳过)");
 				return null;
 			}
+			const pako =
+				(typeof globalThis !== "undefined" && globalThis.pako) ||
+				(typeof pako !== "undefined" ? pako : null);
 			const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
 			const page = doc.getPage(0);
-			const { width, height } = page.getSize();
-			// 水印位于译文第1页顶部(y≈6~18pt), 覆盖顶部 22pt 条带
-			const strip = 22;
-			page.drawRectangle({ x: 0, y: height - strip, width, height: strip, color: lib.rgb(1, 1, 1) });
+			const contents = page.node.Contents();
+			// 水印是 hjfy 翻译管线的标记块: q /CPDFSTAMP BMC ... ET EMC Q, 位于第1页顶部
+			const RE = /q\s*\/CPDFSTAMP\s*BMC[\s\S]*?ET\s*EMC\s*Q\s*/;
+			let removed = false;
+			if (contents && typeof contents.size === "function") {
+				const n = contents.size();
+				for (let i = 0; i < n; i++) {
+					let s;
+					try {
+						s = contents.lookup(i);
+					} catch (e) {
+						continue;
+					}
+					if (!s || !s.contents) continue;
+					const raw = new Uint8Array(s.contents);
+					// 内容流通常为 FlateDecode( zlib ); 解压失败按明文处理
+					let txt = null;
+					let compressed = false;
+					if (pako) {
+						try {
+							txt = new TextDecoder("latin1").decode(pako.inflate(raw));
+							compressed = true;
+						} catch (e) {
+							txt = null;
+						}
+					}
+					if (txt === null) txt = new TextDecoder("latin1").decode(raw);
+					if (RE.test(txt)) {
+						// 真正删除水印块(运算符级移除), 替换后的流写回
+						const patched = txt.replace(RE, "");
+						const enc = Uint8Array.from(patched, (c) => c.charCodeAt(0) & 0xff);
+						s.contents = new Uint8Array(compressed && pako ? pako.deflate(enc) : enc);
+						s.dict.set(lib.PDFName.of("Length"), lib.PDFNumber.of(s.contents.length));
+						removed = true;
+					}
+				}
+			}
+			if (!removed) {
+				// 未找到 CPDFSTAMP 水印: 回退为白色条带覆盖顶部 22pt(保障视觉效果)
+				log("未检测到 CPDFSTAMP 水印, 使用覆盖条带回退");
+				const { width, height } = page.getSize();
+				page.drawRectangle({ x: 0, y: height - 22, width, height: 22, color: lib.rgb(1, 1, 1) });
+			}
 			const out = await doc.save({ useObjectStreams: false });
 			return new Uint8Array(out);
 		}

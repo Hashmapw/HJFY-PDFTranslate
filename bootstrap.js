@@ -13,8 +13,9 @@ function startup({ id, version, rootURI }) {
 	log("startup " + version);
 	try {
 		if (!Zotero.HJFY) {
-			// vendor: pdf-lib (纯净PDF用, 挂到全局 PDFLib)
+			// vendor: pdf-lib (PDF处理) / pako (zlib解压), 挂到全局 PDFLib / pako
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pdf-lib.min.js");
+			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pako.min.js");
 			// core.js: 纯逻辑 (全局 HJFYCore)
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/core.js");
 			// plugin.js: Zotero 胶水 (定义 Zotero.HJFYPlugin)
