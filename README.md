@@ -1,116 +1,126 @@
-# HJFY-PDFTranslate（Zotero 7 插件）
+<p align="center">
+  <img src="content/resources/logo.svg" width="96" alt="HJFY-PDFTranslate"/>
+</p>
 
-自动获取 **arXiv 中文翻译 PDF**（来自 https://hjfy.top/ 的翻译服务），并把翻译结果作为名为 **`PDF-CN`** 的附件挂到当前条目下。
+# HJFY-PDFTranslate · 幻觉翻译 Zotero 版 PDF 翻译
 
-配套文档：[hjfy_top_使用文档.md](./hjfy_top_使用文档.md)（接口逆向全过程）。
-
----
-
-## 功能
-
-| 场景 | 行为 |
-|---|---|
-| 条目「网址」字段含 arXiv 链接（`arxiv.org/abs|pdf` / `alphaxiv.org` / 裸 ID） | 右键 → **获取翻译 PDF (HJFY-PDFTranslate)** → 自动走 查询→轮询→取文件→下载→挂 `PDF-CN` 附件 |
-| 条目「网址」字段为空或不是 arXiv | 右键后弹出对话框：**输入 arXiv 链接** 或 **上传条目已有 PDF 翻译** |
-| 已存在 `PDF-CN` 附件 | 重新获取时**自动替换**旧附件 |
-| 翻译需要登录（新论文 / 上传 PDF） | 在 `Zotero → 设置 → HJFY-PDFTranslate` 里登录一次即可（会话 90 天有效） |
+<p align="center">
+  <b>在 Zotero 里，一条快捷键把 arXiv 论文变成中文 PDF。</b><br/>
+  <img src="https://img.shields.io/badge/Zotero-7-green?style=flat-square" alt="Zotero 7"/>
+  <img src="https://img.shields.io/badge/支持-ArXiv%20%2F%20PDF%20上传-3366FF?style=flat-square" alt="ArXiv/PDF"/>
+  <img src="https://img.shields.io/badge/翻译服务-hjfy.top-22CCEE?style=flat-square" alt="hjfy.top"/>
+</p>
 
 ---
 
-## 安装
+## 这个插件是干什么的？
 
-1. 打开 Zotero 7 → 菜单 `工具 → 插件`（或 `编辑 → 设置 → 高级 → 插件`）。
-2. 点右上角齿轮 ⚙ → **Install Plugin From File...** → 选择 `hjfy-pdftranslate-0.1.0.xpi`。
-3. 按提示**重启 Zotero**。
-4. 安装后在条目上右键，菜单里出现 **「获取翻译 PDF (HJFY-PDFTranslate)」**。
+读论文最大的坎不是难，而是**英文**。这个插件把你 Zotero 里的 arXiv 论文一键翻译成中文，并把结果**自动挂回原条目**——不用打开网站、不用复制粘贴。
 
-> 卸载：插件页面 → 齿轮 → 禁用/移除后重启。
+- 它背后的翻译服务是 [幻觉翻译（hjfy.top）](https://hjfy.top/)，本插件是它的 **Zotero 客户端**。
+- 翻译结果会作为一个标题为 **`PDF-CN`** 的附件出现在论文条目下，和原 PDF 并排，方便对照阅读。
+- 整个过程（翻译排队、进度、完成）都在 Zotero 右下角有提示，不用守着网页。
 
----
+## 它能做什么
 
-## 配置：登录（只有翻译「新论文」或上传 PDF 才需要）
+| 场景 | 你只需要 | 结果 |
+|---|---|---|
+| 条目「网址」里有 arXiv 链接 | 右键 → **获取翻译 PDF** | 自动翻译并挂上 `PDF-CN` 附件，几秒到几分钟 |
+| 条目「网址」是空的/不是 arXiv | 右键后弹窗里**补一个 arXiv 链接**（会自动写回条目的网址字段），或**选择上传条目自带的 PDF** | 走翻译流程，完成后同样挂 `PDF-CN` |
+| 想再拿一份 | 重复右键 | **自动替换**旧的 `PDF-CN`，不产生重复附件 |
 
-1. **浏览器**打开 https://hjfy.top/ ，用微信扫码或手机号登录。
-2. 登录后按 **F12** → 切到 **Console（控制台）** → 输入：
-   ```js
-   copy(document.cookie)
-   ```
-   回车后复制到剪贴板。
-3. 回到 Zotero → `编辑/设置 → 高级 → HJFY-PDFTranslate` 设置面板 → 把内容**粘贴到输入框** → 点 **保存并验证**。
-   - 侧栏名称显示为 `HJFY-PDFTranslate`；打开面板后顶部显示品牌标题 **「幻觉翻译 Zotero 版 PDF 翻译」**。
-   - 显示「已登录: xxx」即成功（插件会把 session 写进 Zotero 的 cookie 库，之后请求自动携带）。
-   - 也可以点「打开登录页面」在默认浏览器打开 hjfy.top。
-4. 随时可「验证当前状态 / 清除登录」。
+另外它还内置了三种登录方式（微信扫码 / 手机号 / 粘贴已有会话），支持退出后重新登录——只在你第一次让网站翻译**新论文或上传 PDF** 时才需要，平时用不上。
 
-> 手机号登录中间的**阿里云滑块验证码**只能人工过，所以登录这一步在浏览器里手动完成由插件保存会话，是最省事且合规的方式。
+## 和直接打开 hjfy.top 网页比？
 
----
+| | 网页版 | 本插件 |
+|---|---|---|
+| 入口 | 打开浏览器 → 输链接 → 等网页 | Zotero 里右键一下 |
+| 结果落位 | 手动下载、手动整理 | 自动挂成条目附件 `PDF-CN` |
+| 进度 | 盯网页 | 右下角弹窗 + 完成通知 |
+| 无网址的论文 | 无解 | 弹窗补链接 / 直接上传条目 PDF |
 
-## 使用
-
-- **有 arXiv 链接的条目**：选中条目 → 右键 → 「获取翻译 PDF (HJFY-PDFTranslate)」。
-  - 已翻译过的论文：直接下载中文 PDF，几秒完成。
-  - 未翻译的新论文：插件每 10 秒轮询，翻译通常 1~10 分钟，完成后自动挂附件。
-- **无 arXiv 链接的条目**：右键后弹窗，可：
-  - 手动输入 arXiv 链接/ID（走相同链路）；
-  - 或一键上传条目自带的 PDF 附件去翻译（需要登录，输出可能是 PDF 或 Markdown，仍挂为 `PDF-CN`）。
-
-附件标题固定为 **`PDF-CN`**，便于识别与批量处理；重复获取会先删旧附件再导入新文件。
+**一句话**：网页版是"翻译完你自己折腾"，插件是"翻译完自己进 Zotero"。
 
 ---
 
-## 目录结构
+## 快速上手
 
-```
-HJFY-PDFTranslate/                                  # ★ 开发目录名（产品/显示名统一为 HJFY-PDFTranslate）
-├── hjfy-pdftranslate-0.1.0.xpi              # 可直接安装的插件包
-├── manifest.json               # 插件清单 (id: hjfy-pdftranslate@hjfy.top)
-├── chrome.manifest             # 内容注册 + 右键菜单 overlay
-├── bootstrap.js                # Zotero 启动入口
-├── hjfy_top_使用文档.md         # 接口逆向/流程文档
-└── content/
-    ├── scripts/core.js         # 纯逻辑: arXiv解析 + API + 流程编排 (可 Node 测试)
-    ├── scripts/plugin.js       # Zotero 胶水: 菜单/面板/会话/附件
-    ├── preferences/preferences.xhtml  # 设置面板(登录)
-    ├── dialogs/arxivInput.xhtml        # 无URL时的输入弹窗
-    └── itemTreeMenuPopup.xhtml         # 右键菜单项
-```
+### 1️⃣ 安装插件
 
----
+1. 拿到插件包 `hjfy-pdftranslate-0.1.0.xpi`（仓库 Release 或 Actions Artifact 里下载，找不到就问维护者要）。
+2. 打开 Zotero → 菜单 **工具 → 插件**。
+3. 点右上角 **齿轮 ⚙ → Install Plugin From File...**，选这个 `.xpi`。
+4. **重启 Zotero**。完成后，右键任意条目，菜单里会出现 **「获取翻译 PDF (HJFY-PDFTranslate)」**。
 
-## 已验证 / 待验证
+### 2️⃣ 登录（可选，翻译“新论文/上传 PDF”才需要）
 
-**已在真实接口上验证（含真实登录会话）**：
-- [x] `parseArxivId`：新式/旧式/带版本号/URL 各种格式
-- [x] `arxivInfo / arxivStatus / arxivFiles` 匿名可用（已翻译论文无需登录）
-- [x] 已翻译论文全流程（2506.17310）→ 下载中文 PDF / 原版 PDF / LaTeX 包成功
-- [x] 未翻译论文匿名返回 `need_login`，带版本号自动降级到无版本号
-- [x] **登录会话有效**：`/api/userinfo` 返回 `login:true`（真实账号验证）
-- [x] **新论文翻译（需登录）**：`arxivStatus` 带会话自动创建任务 `start` → 轮询约 2 分钟 → `finished` → 下载中文 PDF + LaTeX 源码成功
-- [x] **上传 PDF 翻译（需登录）**：`uploadFiles` → `fileKey` → `fileStatus` 轮询 → `finished` → `fileFiles` 返回 `translate_zh_CN.md`（**Markdown 产物**，内容为真实中文翻译，已验证）
-  - 注：上传翻译产物是 Markdown（非 PDF）；站点自身标注该功能「处于实验阶段」，超大/复杂 PDF 可能失败（实测 26 页 arXiv 原版 PDF 失败，小型 PDF 成功）
-- [x] **微信扫码登录全自动模拟**：`qrconnect` 生成二维码 → 扫码/确认 → `errcode=405+wx_code` → 自动导航 `callback/wechat` → 捕获新 session → `userinfo` 验证 `login:true`（state 由 `tools/wechat_qr_state.js` 严格解析，注意与网页登录码表不同：405=成功/404=已扫/408=等待）
-- [ ] Zotero 插件本体（右键菜单/面板/弹窗/附件挂载）——需在装好插件后由你确认
+Zotero → **编辑/设置 → 高级 → HJFY-PDFTranslate**，三种方式任选一种：
 
-> 说明：模拟使用的会话为真实登录的 hjfy.top 账号，流程与插件 `core.js` 完全一致
-> （`tools/simulate.js` 可复现：`HJFY_COOKIE="session=..." node tools/simulate.js arxiv <id>`）。
+- **① 微信扫码**：点按钮弹出二维码，手机微信扫一扫并确认，自动完成登录；
+- **② 手机号**：填手机号 + 验证码。发送验证码时如果网站要求滑块验证，会帮你打开网页，过完滑块短信就到了，把验证码填回即可；
+- **③ 粘贴会话**（高级）：如果你在浏览器里登录过 hjfy.top，按 F12 在控制台输入 `document.cookie`，把输出粘贴进来点「保存并验证」。
 
----
+登录成功后设置页顶部会显示 **「已登录: 你的昵称」**。会话 90 天内都有效；想退出就点 **「退出登录」**，之后随时可用上面任一方式重新登录。
+
+### 3️⃣ 开始使用
+
+- **有条目网址 = arXiv 链接**：选中条目 → 右键 → **获取翻译 PDF**。
+  - 已翻译过 → 几秒直接拿到中文 PDF；
+  - 还没翻译过 → 右下角显示进度，1～10 分钟后完成并自动挂附件。
+- **条目网址为空/不合法**：右键 → 弹窗二选一——
+  - **输入 arXiv 链接**：粘贴链接或 ID，插件会把它写回条目的「网址」字段再翻译；
+  - **上传条目 PDF 翻译**：直接用条目里已有的 PDF 附件发起翻译（需要已登录）。
 
 ## 常见问题
 
-| 现象 | 处理 |
-|---|---|
-| 右键菜单里没有该菜单项 | 确认已重启 Zotero；查看 `帮助 → 调试输出日志` 里有无 `HJFY-PDFTranslate` 及报错 |
-| 提示需要登录 | 到设置面板完成登录（见上），登录后重试 |
-| 新论文一直 101 | 未登录；或服务端当晚/当次才建任务，登录后即建 |
-| 上传提示「需要登录」 | 上传接口强制登录，设置面板登录后再试 |
-| `error`（无源码） | arXiv 部分论文不公开 LaTeX 源码，无法翻译 |
-| `fault`（编译失败） | 翻译 OK 但重编译回 PDF 失败，服务端定期修复，可稍后重试 |
+<details>
+<summary><b>一定要登录吗？</b></summary>
+
+下载**已经翻译过**的论文不需要登录；登录只在你**发起新的翻译**（没翻译过的新论文、或上传 PDF）时才需要。未登录时遇到新论文，插件会提示你先去设置里登录。
+</details>
+
+<details>
+<summary><b>翻译要等多久？</b></summary>
+
+一般 1～10 分钟。新论文的翻译任务在网站那边排队+翻译，插件每 10 秒自动查看一次进度，完成会在右下角通知你。
+</details>
+
+<details>
+<summary><b>为什么上传翻译后的附件不是 PDF，而是 Markdown？</b></summary>
+
+这是 hjfy.top 对"上传文档"翻译的产出格式（`translate_zh_CN.md`）。插件会如实按产物类型挂为 `PDF-CN` 附件。**arXiv 论文**的翻译产出一律是正经 PDF，不受影响。
+</details>
+
+<details>
+<summary><b>提示 error / fault / failed 是什么意思？</b></summary>
+
+- `error`：这篇论文没公开 LaTeX 源码，网站没法翻译；
+- `fault`：翻译成功但合成 PDF 失败，通常网站会定期修复，稍后重试即可；
+- `failed`：翻译失败。arXiv 论文网站会自动复查重试，可稍后再试。
+</details>
+
+<details>
+<summary><b>插件会不会乱动我的数据？</b></summary>
+
+插件只做三件事：读条目的「网址」字段识别 arXiv 链接、调用 hjfy.top 翻译、把结果以 `PDF-CN` 附件写回条目。它只和 hjfy.top 通信，不会上传你的其它数据；上传翻译时也只用你选择的那份 PDF。
+</details>
+
+<details>
+<summary><b>行为和隐私上有啥要注意？</b></summary>
+
+设置里保存的 `session` 等价于你的 hjfy.top 登录凭证，**不要分享给别人**；不用时可在设置页「退出登录」。也请合理频率使用，别拿它批量刷翻译服务。
+</details>
 
 ---
 
-## 安全提示
+## 开发者 / 进阶
 
-- `session` 等价于你在 hjfy.top 的登录凭证，**不要泄露/分享**；用完可在面板「清除登录」并到网站退出登录。
-- 本插件仅在本地请求 hjfy.top 官方接口，与网站自身的反爬约定一致，请合理控制频率、自用为主。
+- **接口与流程细节**：见 [docs/hjfy_top_使用文档.md](./docs/hjfy_top_使用文档.md)（逆向分析 + 全链路说明）。
+- **开发调试工具**：仓库 `tools/` 下提供了流程模拟器、微信扫码登录调试脚本、qrconnect 状态机及单测，便于复现与排查。
+- **在线构建**：本仓库已配置 GitHub Actions，push/PR 自动打 `.xpi` 构建产物，打 `v*` 标签自动发 Release。
+- 本地构建：`zip -rq hjfy-pdftranslate-0.1.0.xpi manifest.json chrome.manifest bootstrap.js content icon.png`
+
+## 致谢
+
+翻译能力来自 [幻觉翻译 hjfy.top](https://hjfy.top/)。本插件只是把它装进 Zotero 的一个壳，请支持原站。
