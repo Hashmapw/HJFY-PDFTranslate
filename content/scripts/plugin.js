@@ -167,6 +167,59 @@
 			return destPath;
 		}
 
+		// ================= 纯净 PDF =================
+		isCleanPdfEnabled() {
+			try {
+				return !!Zotero.Prefs.get("extensions.hjfy-pdftranslate.cleanPdf", true);
+			} catch (e) {
+				return false;
+			}
+		}
+
+		setCleanPdfEnabled(value) {
+			Zotero.Prefs.set("extensions.hjfy-pdftranslate.cleanPdf", !!value, true);
+			log("纯净PDF ->", !!value);
+		}
+
+		/**
+		 * 开启"纯净PDF"且产物为 PDF 时, 去掉译文第1页顶部的 hjfy 水印链接(视觉)
+		 * 用白色矩形覆盖顶部区域, 由 pdf-lib 重写 PDF
+		 */
+		async _maybeCleanPdf(destPath, origUrl) {
+			if (!this.isCleanPdfEnabled()) return destPath;
+			if (!/\.pdf($|[?#])/i.test(origUrl || "")) return destPath;
+			try {
+				const bytes = await getIOUtils().read(destPath);
+				const cleaned = await this._cleanPdfBytes(bytes);
+				if (cleaned && cleaned.length > 0) {
+					await getIOUtils().write(destPath, cleaned, { tmpPath: destPath + ".tmp" });
+					log("纯净PDF: 已去除首页水印");
+				}
+			} catch (e) {
+				// 清理失败时沿用原文件, 不影响主流程
+				log("cleanPdf error", e);
+			}
+			return destPath;
+		}
+
+		async _cleanPdfBytes(bytes) {
+			const lib =
+				(typeof globalThis !== "undefined" && globalThis.PDFLib) ||
+				(typeof PDFLib !== "undefined" ? PDFLib : null);
+			if (!lib) {
+				log("PDFLib 未加载(纯净PDF 将跳过)");
+				return null;
+			}
+			const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
+			const page = doc.getPage(0);
+			const { width, height } = page.getSize();
+			// 水印位于译文第1页顶部(y≈6~18pt), 覆盖顶部 22pt 条带
+			const strip = 22;
+			page.drawRectangle({ x: 0, y: height - strip, width, height: strip, color: lib.rgb(1, 1, 1) });
+			const out = await doc.save({ useObjectStreams: false });
+			return new Uint8Array(out);
+		}
+
 		// ================= 附件 =================
 		_attachmentTitle() {
 			return "PDF-CN";
@@ -305,6 +358,8 @@
 					files.zhCN,
 					Zotero.File.pathJoin(Zotero.getTempDirectory(), fileName)
 				);
+				// 纯净PDF: 去除译文第1页顶部的水印链接(视觉效果)
+				await this._maybeCleanPdf(saved, files.zhCN);
 				pitem.setText("写入附件...");
 				await this.addPdfCNAttachment(item, saved);
 				this._endProgress(pw);
@@ -394,6 +449,8 @@
 					files.zhCN,
 					Zotero.File.pathJoin(Zotero.getTempDirectory(), `hjfy-upload-${Date.now()}${ext}`)
 				);
+				// 纯净PDF: 上传翻译产物若为 PDF 同样去除首页水印
+				await this._maybeCleanPdf(saved, files.zhCN);
 				await this.addPdfCNAttachment(item, saved);
 				this._endProgress(pw);
 				this.notify(`已添加 PDF-CN 附件 (${isPdf ? "PDF" : "Markdown"})`, "success");
@@ -601,6 +658,16 @@
 					await this.logout();
 					await render();
 					this.notify("已退出登录", "success");
+				});
+			}
+
+			// --- 下载设置: 纯净 PDF ---
+			const cleanCb = doc.getElementById("hjfy-clean-pdf");
+			if (cleanCb) {
+				cleanCb.checked = this.isCleanPdfEnabled();
+				cleanCb.addEventListener("change", () => {
+					this.setCleanPdfEnabled(cleanCb.checked);
+					this.notify("纯净 PDF " + (cleanCb.checked ? "已开启" : "已关闭"), "success");
 				});
 			}
 
