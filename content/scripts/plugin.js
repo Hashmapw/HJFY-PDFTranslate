@@ -252,9 +252,26 @@
 					this.notify("未识别到有效的 arXiv 链接", "fail");
 					return null;
 				}
+				// 用户输入的 arXiv 链接写入条目「网址」字段(仅当该字段当前无效时)
+				await this._ensureItemUrl(item, cid);
 				return await this.runArxiv(item, cid);
 			}
 			return null;
+		}
+
+		/**
+		 * 把有效的 arXiv ID 写入条目「网址」字段(已有有效链接则跳过)
+		 */
+		async _ensureItemUrl(item, arxivId) {
+			try {
+				const cur = item.getField("url") || "";
+				if (HJFYCore.parseArxivId(cur)) return; // 已是有效 arXiv 链接, 不改
+				item.setField("url", `https://arxiv.org/abs/${arxivId}`);
+				await item.saveTx();
+				log("已更新条目网址 ->", `https://arxiv.org/abs/${arxivId}`);
+			} catch (e) {
+				log("_ensureItemUrl error", e);
+			}
 		}
 
 		/**
@@ -502,6 +519,7 @@
 				pluginID: "hjfy-pdftranslate@hjfy.top",
 				src: this.rootURI + "content/preferences/preferences.xhtml",
 				label: "HJFY-PDFTranslate",
+				image: this.rootURI + "content/resources/logo.png", // 设置界面左侧图标
 				onLoad: (win) => {},
 			});
 			log("prefs pane registered");
