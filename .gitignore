@@ -1,0 +1,12 @@
+# 构建产物
+*.xpi
+# 测试/登录中间产物
+tools/wechat-login-qr.*
+tools/sim-*.pdf
+tools/sim-*.tgz
+tools/sim-*.md
+session.txt
+# 系统与Python
+.DS_Store
+__pycache__/
+*.pyc
