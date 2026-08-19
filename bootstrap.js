@@ -18,7 +18,7 @@ async function startup({ id, version, rootURI }) {
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/core.js");
 			// plugin.js: Zotero 胶水 (定义 Zotero.HJFYPlugin)
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/plugin.js");
-			Zotero.HJFY = new Zotero.HJFYPlugin(rootURI);
+			Zotero.HJFY = new Zotero.HJFYPlugin(rootURI, Services);
 			await Zotero.HJFY.init();
 		}
 	} catch (e) {

@@ -75,4 +75,13 @@ test("preference markup is an XHTML fragment accepted by Zotero", () => {
 	]) {
 		assert.match(source, new RegExp(`id="${id}"`));
 	}
+	assert.doesNotMatch(source, /①|②|基于 hjfy\.top|人机验证|不是简单遮盖/);
+});
+
+test("preference layout uses readable spacing", () => {
+	const source = fs.readFileSync(path.join(__dirname, "../content/preferences/preferences.css"), "utf8");
+
+	assert.match(source, /line-height:\s*1\.55/);
+	assert.match(source, /row-gap:\s*12px/);
+	assert.match(source, /\.hjfy-section\s*\{/);
 });

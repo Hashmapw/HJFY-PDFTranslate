@@ -81,6 +81,11 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 	const loadedScripts = [];
 	const Zotero = { debug() {}, HJFY: null };
 	class Plugin {
+		constructor(rootURI, services) {
+			this.rootURI = rootURI;
+			this.services = services;
+		}
+
 		init() {
 			this.initialized = true;
 		}
@@ -107,4 +112,5 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 
 	assert.equal(loadedScripts.length, 4);
 	assert.equal(Zotero.HJFY.initialized, true);
+	assert.equal(Zotero.HJFY.services, context.Services);
 });

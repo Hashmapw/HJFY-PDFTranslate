@@ -14,21 +14,124 @@
 	const MENU_ID = "hjfy-pdftranslate-fetch-cn";
 	const MENU_ELEMENT_ID = "hjfy-pdftranslate-fetchcn";
 	const MENU_FTL = "hjfy-pdftranslate.ftl";
+	const HTML_NS = "http://www.w3.org/1999/xhtml";
 
 	let ServicesModule = null;
 	function getServices() {
+		if (ServicesModule) return ServicesModule;
+		// Zotero 8+ exposes Services to bootstrap scripts. A sub-script does not
+		// always inherit that lexical binding, so use it when available before
+		// trying the Gecko module imports used by older Zotero versions.
+		try {
+			if (typeof Services !== "undefined" && Services) return (ServicesModule = Services);
+		} catch (e) {
+			/* global Services is unavailable */
+		}
+		try {
+			if (typeof ChromeUtils !== "undefined" && ChromeUtils.importESModule) {
+				ServicesModule = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs").Services;
+			}
+		} catch (e) {
+			try {
+				if (typeof ChromeUtils !== "undefined" && ChromeUtils.import) {
+					ServicesModule = ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
+				}
+			} catch (e2) {
+				ServicesModule = null;
+			}
+		}
 		if (!ServicesModule) {
 			try {
-				ServicesModule = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs").Services;
-			} catch (e) {
-				try {
-					ServicesModule = ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
-				} catch (e2) {
-					ServicesModule = null;
+				if (typeof Components !== "undefined" && Components.utils && Components.utils.import) {
+					ServicesModule = Components.utils.import("resource://gre/modules/Services.jsm", {}).Services;
 				}
+			} catch (e) {
+				ServicesModule = null;
 			}
 		}
 		return ServicesModule;
+	}
+
+	function getMainWindow() {
+		try {
+			if (typeof Zotero.getMainWindow === "function") {
+				const win = Zotero.getMainWindow();
+				if (win) return win;
+			}
+			if (typeof Zotero.getMainWindows === "function") return Zotero.getMainWindows()[0] || null;
+		} catch (e) {
+			log("get main window error", e);
+		}
+		return null;
+	}
+
+	function openExternalURL(url) {
+		if (typeof Zotero.launchURL === "function") return Zotero.launchURL(url);
+		const svc = getServices();
+		if (svc && svc.externalProtocolService && svc.io && svc.io.newURI) {
+			return svc.externalProtocolService.loadURI(svc.io.newURI(url));
+		}
+		// Zotero 7 fallback; only call it when the function really exists.
+		if (Zotero.Utilities && Zotero.Utilities.Internal && typeof Zotero.Utilities.Internal.openURL === "function") {
+			return Zotero.Utilities.Internal.openURL(url);
+		}
+		throw new Error("Zotero does not provide an external URL opener");
+	}
+
+	function appendHTMLElement(doc, parent, tag, options = {}) {
+		const element = doc.createElementNS(HTML_NS, tag);
+		if (options.className) element.className = options.className;
+		if (options.text !== undefined) element.textContent = options.text;
+		for (const [name, value] of Object.entries(options.attributes || {})) {
+			element.setAttribute(name, value);
+		}
+		parent.appendChild(element);
+		return element;
+	}
+
+	function prepareDialogDocument(win, title, styles) {
+		const doc = win.document;
+		doc.title = title;
+		doc.documentElement.setAttribute("lang", "zh-CN");
+		doc.head.replaceChildren();
+		doc.body.replaceChildren();
+		appendHTMLElement(doc, doc.head, "meta", { attributes: { charset: "utf-8" } });
+		appendHTMLElement(doc, doc.head, "title", { text: title });
+		appendHTMLElement(doc, doc.head, "style", { text: styles });
+		return doc;
+	}
+
+	function openDialogWindow(name, features, args, onReady, parentWindow) {
+		const owner = getMainWindow() || parentWindow;
+		let win = null;
+		if (owner && typeof owner.openDialog === "function") {
+			win = owner.openDialog("about:blank", name, features, args);
+		} else {
+			const svc = getServices();
+			if (svc && svc.ww && typeof svc.ww.openWindow === "function") {
+				win = svc.ww.openWindow(null, "about:blank", name, features, args);
+			}
+		}
+		if (!win) throw new Error("Zotero window service is unavailable");
+
+		const ready = () => {
+			try {
+				onReady(win);
+			} catch (e) {
+				log("dialog render error", e);
+				try {
+					win.close();
+				} catch (closeError) {
+					/* ignore */
+				}
+			}
+		};
+		if (win.document && (win.document.readyState === "interactive" || win.document.readyState === "complete")) {
+			setTimeout(ready, 0);
+		} else {
+			win.addEventListener("DOMContentLoaded", ready, { once: true });
+		}
+		return win;
 	}
 
 	let IOUtils = null;
@@ -51,7 +154,8 @@
 	}
 
 	class HJFYPlugin {
-		constructor(rootURI) {
+		constructor(rootURI, services) {
+			if (services) ServicesModule = services;
 			this.rootURI = rootURI;
 			this.api = HJFYCore.createApi((method, url, body) => this._request(method, url, body));
 			this._onProgress = null;
@@ -129,7 +233,9 @@
 			if (!value) {
 				return { ok: false, msg: "内容为空，请输入 document.cookie 的输出" };
 			}
-			const cm = getServices().cookies;
+			const services = getServices();
+			if (!services || !services.cookies) return { ok: false, msg: "Zotero cookie 服务不可用" };
+			const cm = services.cookies;
 			try {
 				cm.remove(SITE, "session", "/", {});
 			} catch (e) {
@@ -158,7 +264,8 @@
 
 		async clearSession() {
 			try {
-				getServices().cookies.remove(SITE, "session", "/", {});
+				const services = getServices();
+				if (services && services.cookies) services.cookies.remove(SITE, "session", "/", {});
 			} catch (e) {
 				/* ignore */
 			}
@@ -733,22 +840,25 @@
 			root.dataset.hjfyInitialized = "true";
 			const statusEl = doc.getElementById("hjfy-status");
 			const sessionInput = doc.getElementById("hjfy-session-input");
+			const logoutBtn = doc.getElementById("hjfy-logout");
 
 			const render = async () => {
 				const u = await this.checkLogin();
-				if (u && u.login) {
-					statusEl.textContent = "已登录: " + (u.nickname || "未知用户");
-					statusEl.style.color = "#2e7d32";
+				const loggedIn = !!(u && u.login);
+				if (loggedIn) {
+					statusEl.textContent = "已登录 · " + (u.nickname || "HJFY 用户");
+					statusEl.dataset.state = "success";
 				} else {
-					statusEl.textContent = "未登录" + (u && u.error ? "（网络异常）" : "—— 请用微信扫码或手机号登录");
-					statusEl.style.color = "#c62828";
+					statusEl.textContent = u && u.error ? "连接失败" : "未登录";
+					statusEl.dataset.state = u && u.error ? "error" : "idle";
 				}
+				if (logoutBtn && logoutBtn.parentElement) logoutBtn.parentElement.hidden = !loggedIn;
 				sessionInput.value = this.getSessionPref() ? "session=" + this.getSessionPref() : "";
 			};
 
 			// --- ① 微信扫码 ---
 			const wxBtn = doc.getElementById("hjfy-wechat-login");
-			if (wxBtn) wxBtn.addEventListener("click", () => this.openWechatLogin(() => render()));
+			if (wxBtn) wxBtn.addEventListener("click", () => this.openWechatLogin(() => render(), win));
 
 			// --- ② 手机号 ---
 			const phoneInput = doc.getElementById("hjfy-phone");
@@ -766,9 +876,9 @@
 					sendStatus.textContent = "发送中...";
 					const r = await this.trySendCode(phone);
 					sendStatus.textContent = r.ok
-						? "验证码已发送，请查收短信"
+						? "验证码已发送"
 						: r.needCaptcha
-							? "请在打开的网页中过滑块发送验证码，再把验证码填到这里"
+							? "请在网页完成人机验证"
 							: r.msg || "发送失败";
 				});
 			}
@@ -811,10 +921,9 @@
 					await render();
 				});
 			}
-			if (openBtn) openBtn.addEventListener("click", () => Zotero.Utilities.Internal.openURL("https://hjfy.top/"));
+			if (openBtn) openBtn.addEventListener("click", () => openExternalURL("https://hjfy.top/"));
 
 			// --- 退出登录 ---
-			const logoutBtn = doc.getElementById("hjfy-logout");
 			if (logoutBtn) {
 				logoutBtn.addEventListener("click", async () => {
 					await this.logout();
@@ -837,16 +946,138 @@
 		}
 
 		// ================= 登录: 微信扫码 =================
+		_renderWechatDialog(win, onLoginSeen) {
+			const doc = prepareDialogDocument(
+				win,
+				"微信扫码登录",
+				`body {
+					box-sizing: border-box;
+					margin: 0;
+					padding: 20px;
+					font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+					color: CanvasText;
+					background: Canvas;
+				}
+				h1 { margin: 0 0 6px; font-size: 18px; }
+				p { margin: 0 0 14px; color: GrayText; }
+				.qr-stage { display: grid; place-items: center; box-sizing: border-box; width: 100%; height: 320px; border: 1px solid rgba(127, 127, 127, .3); }
+				.qr-stage img { display: block; width: 280px; height: 280px; object-fit: contain; }
+				footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+				.status { color: GrayText; font-size: 12px; }
+				button { min-height: 31px; padding: 4px 14px; font: inherit; }`
+			);
+			appendHTMLElement(doc, doc.body, "h1", { text: "微信扫码登录" });
+			appendHTMLElement(doc, doc.body, "p", { text: "使用微信扫码并在手机上确认" });
+			const stage = appendHTMLElement(doc, doc.body, "div", { className: "qr-stage" });
+			const image = appendHTMLElement(doc, stage, "img", { attributes: { alt: "微信登录二维码" } });
+			image.hidden = true;
+			const footer = appendHTMLElement(doc, doc.body, "footer");
+			const status = appendHTMLElement(doc, footer, "span", { className: "status", text: "二维码加载中..." });
+			const closeButton = appendHTMLElement(doc, footer, "button", { text: "关闭", attributes: { type: "button" } });
+			closeButton.addEventListener("click", () => win.close());
+			this._runWechatLogin(win, image, status, onLoginSeen).catch((e) => {
+				log("WeChat login flow error", e);
+				if (!win.closed) status.textContent = "微信登录服务连接失败";
+			});
+			win.focus();
+		}
+
+		_parseWechatPoll(body) {
+			if (typeof body !== "string") return null;
+			const errorMatch = /(?:window\.)?wx_errcode\s*=\s*(-?\d+)/.exec(body);
+			if (!errorMatch) return null;
+			const codeMatch = /(?:window\.)?wx_code\s*=\s*(['"])([\s\S]*?)\1/.exec(body);
+			return {
+				code: Number.parseInt(errorMatch[1], 10),
+				wxCode: codeMatch ? codeMatch[2].replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))).replace(/\\(['"\\])/g, "$1") : "",
+			};
+		}
+
+		async _runWechatLogin(win, image, status, onLoginSeen) {
+			const redirect = encodeURIComponent("https://hjfy.top/api/login/callback/wechat?path=%2F");
+			const pageURL =
+				"https://open.weixin.qq.com/connect/qrconnect?appid=wxd7885e86e52192fe&scope=snsapi_login" +
+				"&redirect_uri=" + redirect + "&state=HJFYZT&login_type=jssdk&self_redirect=false";
+			const pageResponse = await Zotero.HTTP.request("GET", pageURL, {
+				useCookieService: true,
+				responseType: "text",
+				timeout: 30000,
+			});
+			const page = pageResponse.responseText || pageResponse.response || "";
+			const uuidMatch = /(?:uuid=|\/connect\/qrcode\/)([A-Za-z0-9_-]+)/.exec(page);
+			if (!uuidMatch) throw new Error("WeChat response did not contain a QR code");
+			const uuid = uuidMatch[1];
+
+			image.addEventListener("load", () => {
+				status.textContent = "请扫码并确认登录";
+			});
+			image.addEventListener("error", () => {
+				status.textContent = "二维码加载失败";
+			});
+			image.src = "https://open.weixin.qq.com/connect/qrcode/" + encodeURIComponent(uuid);
+			image.hidden = false;
+
+			const deadline = Date.now() + 10 * 60 * 1000;
+			let scanned = false;
+			while (!win.closed && Date.now() < deadline) {
+				const last = scanned ? "&last=404" : "";
+				const pollResponse = await Zotero.HTTP.request(
+					"GET",
+					"https://long.open.weixin.qq.com/connect/l/qrconnect?uuid=" +
+						encodeURIComponent(uuid) + last + "&_=" + Date.now() + "000",
+					{
+						useCookieService: true,
+						responseType: "text",
+						timeout: 40000,
+						headers: { Referer: "https://open.weixin.qq.com/" },
+					}
+				);
+				const poll = this._parseWechatPoll(pollResponse.responseText || pollResponse.response || "");
+				if (!poll) throw new Error("Unexpected WeChat poll response");
+				if (poll.code === 404) {
+					scanned = true;
+					status.textContent = "已扫码，请在手机上确认";
+				} else if (poll.code === 405 && poll.wxCode) {
+					status.textContent = "正在完成登录...";
+					await Zotero.HTTP.request(
+						"GET",
+						`${BASE}/api/login/callback/wechat?code=${encodeURIComponent(poll.wxCode)}&state=HJFYZT`,
+						{ useCookieService: true, responseType: "text", timeout: 30000, successCodes: [200, 302] }
+					);
+					const session = this._readSessionCookie();
+					if (!session) throw new Error("HJFY callback did not create a session");
+					await onLoginSeen(session);
+					return;
+				} else if (poll.code === 403) {
+					status.textContent = "已取消授权";
+					return;
+				} else if (poll.code === 402) {
+					status.textContent = "二维码已失效，请重新打开";
+					return;
+				} else if (poll.code === 500) {
+					status.textContent = "微信服务异常";
+					return;
+				}
+				await new Promise((resolve) => setTimeout(resolve, 1000));
+			}
+			if (!win.closed) status.textContent = "二维码已过期，请重新打开";
+		}
+
 		/**
 		 * 打开微信扫码登录窗口(非模态)。窗口内走完回调后 onSuccess 会带回 session。
 		 * 兜底: 若二维码窗口被顶层跳转导航走, 本函数会轮询本地 cookie 直到登录完成或超时。
 		 */
-		openWechatLogin(onChanged) {
-			const svc = getServices();
+		openWechatLogin(onChanged, parentWindow) {
 			let done = false;
+			let dialogWindow = null;
 			const onLoginSeen = async (sessionValue) => {
 				if (done) return;
 				done = true;
+				try {
+					if (dialogWindow && !dialogWindow.closed) dialogWindow.close();
+				} catch (e) {
+					/* ignore */
+				}
 				const r = await this.saveSession(sessionValue);
 				if (r && r.ok) this.notify("微信登录成功: " + (r.user.nickname || ""), "success");
 				else this.notify("微信登录失败: " + ((r && r.msg) || "会话无效"), "fail");
@@ -875,19 +1106,21 @@
 				}
 			}, 2000);
 			const args = {
+				services: getServices(),
 				onSuccess: (sessionValue) => {
 					clearInterval(timer);
 					onLoginSeen(sessionValue);
 				},
 			};
 			try {
-				svc.ww.openWindow(
-					null,
-					this.rootURI + "content/dialogs/wechatLogin.xhtml",
+				dialogWindow = openDialogWindow(
 					"hjfy-wechat-login",
-					"chrome,centerscreen,resizable,width=480,height=580",
-					args
+					"centerscreen,resizable=yes,width=480,height=560",
+					args,
+					(win) => this._renderWechatDialog(win, onLoginSeen),
+					parentWindow
 				);
+				dialogWindow.addEventListener("unload", () => clearInterval(timer), { once: true });
 			} catch (e) {
 				clearInterval(timer);
 				log("openWechatLogin error", e);
@@ -896,7 +1129,9 @@
 		}
 
 		_readSessionCookie() {
-			const cm = getServices().cookies.getCookiesFromHost(SITE, {});
+			const services = getServices();
+			if (!services || !services.cookies) throw new Error("Zotero cookie service is unavailable");
+			const cm = services.cookies.getCookiesFromHost(SITE, {});
 			while (cm.hasMoreElements()) {
 				const c = cm.getNext().QueryInterface(Ci.nsICookie);
 				if (c.name === "session") return c.value;
@@ -914,7 +1149,7 @@
 				});
 				if (j && j.status === 0) return { ok: true };
 				if (j && j.status === 400) {
-					Zotero.Utilities.Internal.openURL("https://hjfy.top/");
+					openExternalURL("https://hjfy.top/");
 					return { ok: false, needCaptcha: true, msg: j.msg };
 				}
 				return { ok: false, msg: (j && j.msg) || "发送失败" };
@@ -954,12 +1189,62 @@
 		}
 
 		// ================= 输入弹窗（无 arXiv 链接时） =================
+		_renderArxivDialog(win, args) {
+			const doc = prepareDialogDocument(
+				win,
+				"获取翻译 PDF",
+				`body {
+					box-sizing: border-box;
+					margin: 0;
+					padding: 22px;
+					font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+					color: CanvasText;
+					background: Canvas;
+				}
+				h1 { margin: 0 0 6px; font-size: 18px; }
+				p { margin: 0 0 18px; color: GrayText; }
+				label { display: block; margin-bottom: 7px; font-weight: 600; }
+				input { box-sizing: border-box; width: 100%; height: 34px; padding: 5px 8px; font: inherit; }
+				footer { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
+				button { min-height: 31px; padding: 4px 13px; font: inherit; }`
+			);
+			appendHTMLElement(doc, doc.body, "h1", { text: "获取翻译 PDF" });
+			appendHTMLElement(doc, doc.body, "p", { text: args.itemTitle || "当前条目没有 arXiv 链接" });
+			const inputID = "hjfy-arxiv-input";
+			appendHTMLElement(doc, doc.body, "label", { text: "arXiv 链接或 ID", attributes: { for: inputID } });
+			const input = appendHTMLElement(doc, doc.body, "input", {
+				attributes: { id: inputID, type: "text", placeholder: "2506.17310" },
+			});
+			const footer = appendHTMLElement(doc, doc.body, "footer");
+			const fetchButton = appendHTMLElement(doc, footer, "button", { text: "获取翻译", attributes: { type: "button" } });
+			const uploadButton = appendHTMLElement(doc, footer, "button", { text: "上传 PDF", attributes: { type: "button" } });
+			const cancelButton = appendHTMLElement(doc, footer, "button", { text: "取消", attributes: { type: "button" } });
+			const finish = (choice) => {
+				args.done(choice);
+				win.close();
+			};
+			fetchButton.addEventListener("click", () => finish({ mode: "arxiv", text: input.value.trim() }));
+			uploadButton.addEventListener("click", () => finish({ mode: "upload" }));
+			cancelButton.addEventListener("click", () => finish({ mode: "cancel" }));
+			input.addEventListener("keydown", (event) => {
+				if (event.key === "Enter") finish({ mode: "arxiv", text: input.value.trim() });
+				if (event.key === "Escape") finish({ mode: "cancel" });
+			});
+			input.focus();
+			win.focus();
+		}
+
 		openArxivDialog(item) {
 			return new Promise((resolve) => {
-				const svc = getServices();
+				let settled = false;
+				const done = (choice) => {
+					if (settled) return;
+					settled = true;
+					resolve(choice || { mode: "cancel" });
+				};
 				const args = {
 					itemTitle: "",
-					done: (choice) => resolve(choice || { mode: "cancel" }),
+					done,
 				};
 				try {
 					args.itemTitle = item.getField("title") || "";
@@ -967,18 +1252,16 @@
 					/* ignore */
 				}
 				try {
-					svc.ww.openWindow(
-						null,
-						this.rootURI + "content/dialogs/arxivInput.xhtml",
+					const dialogWindow = openDialogWindow(
 						"hjfy-pdftranslate-input",
-						"chrome,centerscreen,modal,resizable,width=560,height=460",
-						args
+						"centerscreen,resizable=yes,width=560,height=330",
+						args,
+						(win) => this._renderArxivDialog(win, args)
 					);
-					// 模态窗口关闭后仍未选择则取消
-					setTimeout(() => resolve({ mode: "cancel" }), 0);
+					dialogWindow.addEventListener("unload", () => done({ mode: "cancel" }), { once: true });
 				} catch (e) {
 					log("openArxivDialog error", e);
-					resolve({ mode: "cancel" });
+					done({ mode: "cancel" });
 				}
 			});
 		}
