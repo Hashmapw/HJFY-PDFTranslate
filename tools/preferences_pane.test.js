@@ -85,4 +85,5 @@ test("preference layout keeps styles inside the pane", () => {
 	assert.match(source, /font:\s*13px\/1\.55/);
 	assert.match(source, /\.hjfy-block/);
 	assert.match(source, /margin:\s*10px 0/);
+	assert.match(source, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
 });
