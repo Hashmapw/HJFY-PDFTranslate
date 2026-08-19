@@ -1,6 +1,4 @@
-# HJFY-PDFTranslate
-
-> 兼容 **Zotero 7 / 8 / 9 及以后版本**：插件清单未设版本上限，Zotero 官方保持对插件格式的向后兼容。
+# HJFY-PDFTranslate（Zotero 7 插件）
 
 自动获取 **arXiv 中文翻译 PDF**（来自 https://hjfy.top/ 的翻译服务），并把翻译结果作为名为 **`PDF-CN`** 的附件挂到当前条目下。
 
@@ -15,14 +13,13 @@
 | 条目「网址」字段含 arXiv 链接（`arxiv.org/abs|pdf` / `alphaxiv.org` / 裸 ID） | 右键 → **获取翻译 PDF (HJFY-PDFTranslate)** → 自动走 查询→轮询→取文件→下载→挂 `PDF-CN` 附件 |
 | 条目「网址」字段为空或不是 arXiv | 右键后弹出对话框：**输入 arXiv 链接** 或 **上传条目已有 PDF 翻译** |
 | 已存在 `PDF-CN` 附件 | 重新获取时**自动替换**旧附件 |
-| 想要"干净"的译文 | 设置里勾选 **纯净 PDF** | 下载时**直接删除**译文第 1 页的水印链接（hjfy.top 网址），不是简单遮盖 |
 | 翻译需要登录（新论文 / 上传 PDF） | 在 `Zotero → 设置 → HJFY-PDFTranslate` 里登录一次即可（会话 90 天有效） |
 
 ---
 
 ## 安装
 
-1. 打开 Zotero（7/8/9 均可）→ 菜单 `工具 → 插件`（或 `编辑 → 设置 → 高级 → 插件`）。
+1. 打开 Zotero 7 → 菜单 `工具 → 插件`（或 `编辑 → 设置 → 高级 → 插件`）。
 2. 点右上角齿轮 ⚙ → **Install Plugin From File...** → 选择 `hjfy-pdftranslate-0.1.0.xpi`。
 3. 按提示**重启 Zotero**。
 4. 安装后在条目上右键，菜单里出现 **「获取翻译 PDF (HJFY-PDFTranslate)」**。
