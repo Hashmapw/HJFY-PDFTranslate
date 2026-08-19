@@ -1,0 +1,50 @@
+name: Build XPI
+
+# 触发: 推 main、PR、以及 v* 标签
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: write   # 打 tag 发布 Release 需要
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Extract version
+        id: ver
+        run: |
+          echo "version=$(python3 -c "import json;print(json.load(open('manifest.json'))['version'])")" >> "$GITHUB_OUTPUT"
+          echo "plugin-id=$(python3 -c "import json;print(json.load(open('manifest.json'))['applications']['zotero']['id'])")" >> "$GITHUB_OUTPUT"
+
+      - name: Package XPI
+        run: |
+          mkdir -p dist
+          zip -rq "dist/hjfy-pdftranslate-${{ steps.ver.outputs.version }}.xpi" \
+            manifest.json chrome.manifest bootstrap.js content icon.png
+          ls -la dist/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hjfy-pdftranslate-${{ steps.ver.outputs.version }}.xpi
+          path: dist/*.xpi
+
+      # 仅在 v* 标签时创建 GitHub Release 并附上 xpi
+      - name: Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.xpi
+          generate_release_notes: true
