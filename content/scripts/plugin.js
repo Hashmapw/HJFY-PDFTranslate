@@ -210,51 +210,69 @@
 				log("PDFLib 未加载(纯净PDF 将跳过)");
 				return null;
 			}
-			const pako =
+			const pakoLib =
 				(typeof globalThis !== "undefined" && globalThis.pako) ||
 				(typeof pako !== "undefined" ? pako : null);
 			const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
-			const page = doc.getPage(0);
-			const contents = page.node.Contents();
-			// 水印是 hjfy 翻译管线的标记块: q /CPDFSTAMP BMC ... ET EMC Q, 位于第1页顶部
-			const RE = /q\s*\/CPDFSTAMP\s*BMC[\s\S]*?ET\s*EMC\s*Q\s*/;
+			// 水印是 hjfy 翻译管线的标记块: q /CPDFSTAMP BMC ... ET EMC Q
+			const RE_BLOCK = /q\s*\/CPDFSTAMP\s*BMC[\s\S]*?ET\s*EMC\s*Q\s*/;
+			// 兜底: 无标记块时, 删除文本运算符里含 hjfy 域名的画字指令(不依赖位置)
+			const RE_HJFY_TJ = /\([^()\\]*?hjfy[^()\\]*?\)\s*Tj/g;
+			const RE_HJFY_ARRAY = /\[[^\]]*?hjfy[^\]]*?\]\s*TJ/g;
 			let removed = false;
-			if (contents && typeof contents.size === "function") {
-				const n = contents.size();
-				for (let i = 0; i < n; i++) {
-					let s;
-					try {
-						s = contents.lookup(i);
-					} catch (e) {
-						continue;
+			const pageCount = doc.getPageCount();
+			for (let p = 0; p < pageCount; p++) {
+				const page = doc.getPage(p);
+				let contents = null;
+				try {
+					contents = page.node.Contents();
+				} catch (e) {
+					continue;
+				}
+				if (contents === null || contents === undefined) continue;
+				// /Contents 可能是数组或多流; 统一转成可遍历数组
+				let streams = [];
+				if (typeof contents.size === "function") {
+					const n = contents.size();
+					for (let i = 0; i < n; i++) {
+						try {
+							streams.push(contents.lookup(i));
+						} catch (e) {
+							/* ignore */
+						}
 					}
+				} else if (typeof contents.getContents === "function") {
+					streams.push(contents);
+				}
+				for (const s of streams) {
 					if (!s || !s.contents) continue;
 					const raw = new Uint8Array(s.contents);
-					// 内容流通常为 FlateDecode( zlib ); 解压失败按明文处理
 					let txt = null;
 					let compressed = false;
-					if (pako) {
+					if (pakoLib) {
 						try {
-							txt = new TextDecoder("latin1").decode(pako.inflate(raw));
+							txt = new TextDecoder("latin1").decode(pakoLib.inflate(raw));
 							compressed = true;
 						} catch (e) {
 							txt = null;
 						}
 					}
 					if (txt === null) txt = new TextDecoder("latin1").decode(raw);
-					if (RE.test(txt)) {
-						// 真正删除水印块(运算符级移除), 替换后的流写回
-						const patched = txt.replace(RE, "");
+					let patched = txt.replace(RE_BLOCK, "");
+					patched = patched.replace(RE_HJFY_TJ, "");
+					patched = patched.replace(RE_HJFY_ARRAY, "");
+					if (patched !== txt) {
 						const enc = Uint8Array.from(patched, (c) => c.charCodeAt(0) & 0xff);
-						s.contents = new Uint8Array(compressed && pako ? pako.deflate(enc) : enc);
+						s.contents = new Uint8Array(compressed && pakoLib ? pakoLib.deflate(enc) : enc);
 						s.dict.set(lib.PDFName.of("Length"), lib.PDFNumber.of(s.contents.length));
 						removed = true;
 					}
 				}
 			}
 			if (!removed) {
-				// 未找到 CPDFSTAMP 水印: 回退为白色条带覆盖顶部 22pt(保障视觉效果)
-				log("未检测到 CPDFSTAMP 水印, 使用覆盖条带回退");
+				// 最后手段: 第1页顶部覆盖白色条带(只对"第1页顶部水印"这一已知布局有效, 非保底保证)
+				log("未检测到可删除的水印文本, 使用白色条带兜底(非保底保证)");
+				const page = doc.getPage(0);
 				const { width, height } = page.getSize();
 				page.drawRectangle({ x: 0, y: height - 22, width, height: 22, color: lib.rgb(1, 1, 1) });
 			}
