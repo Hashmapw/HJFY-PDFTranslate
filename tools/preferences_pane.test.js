@@ -39,9 +39,7 @@ test("registers a stable Zotero preference pane and waits for completion", async
 	assert.equal(registrations[0].pluginID, "hjfy-pdftranslate@hjfy.top");
 	assert.equal(registrations[0].src, "file:///addon/content/preferences/preferences.xhtml");
 	assert.equal(registrations[0].label, "HJFY 翻译");
-	assert.deepEqual(Array.from(registrations[0].stylesheets), [
-		"file:///addon/content/preferences/preferences.css",
-	]);
+	assert.equal(registrations[0].stylesheets, undefined);
 });
 
 test("a menu registration error does not prevent preference registration", async () => {
@@ -64,7 +62,9 @@ test("preference markup is an XHTML fragment accepted by Zotero", () => {
 	assert.doesNotMatch(source, /<!DOCTYPE|<html(?:\s|>)|<head(?:\s|>)|<body(?:\s|>)/i);
 	assert.match(source, /xmlns:html="http:\/\/www\.w3\.org\/1999\/xhtml"/);
 	assert.match(source, /onload="Zotero\.HJFY\.setupPrefs\(window\)"/);
-	assert.doesNotMatch(source, /<html:style>/);
+	assert.match(source, /<html:style><!\[CDATA\[/);
+	assert.doesNotMatch(source, /html:(?:header|section|h2|details|summary)\b/);
+	assert.doesNotMatch(source, /\.dataset\b/);
 	for (const id of [
 		"hjfy-status",
 		"hjfy-wechat-login",
@@ -72,16 +72,17 @@ test("preference markup is an XHTML fragment accepted by Zotero", () => {
 		"hjfy-phone-code",
 		"hjfy-clean-pdf",
 		"hjfy-logout",
+		"hjfy-advanced-toggle",
 	]) {
 		assert.match(source, new RegExp(`id="${id}"`));
 	}
 	assert.doesNotMatch(source, /①|②|基于 hjfy\.top|人机验证|不是简单遮盖/);
 });
 
-test("preference layout uses readable spacing", () => {
-	const source = fs.readFileSync(path.join(__dirname, "../content/preferences/preferences.css"), "utf8");
+test("preference layout keeps styles inside the pane", () => {
+	const source = fs.readFileSync(path.join(__dirname, "../content/preferences/preferences.xhtml"), "utf8");
 
-	assert.match(source, /line-height:\s*1\.55/);
-	assert.match(source, /row-gap:\s*12px/);
-	assert.match(source, /\.hjfy-section\s*\{/);
+	assert.match(source, /font:\s*13px\/1\.55/);
+	assert.match(source, /\.hjfy-block/);
+	assert.match(source, /margin:\s*10px 0/);
 });

@@ -823,7 +823,6 @@
 				id: "hjfy-pdftranslate-preferences",
 				pluginID: PLUGIN_ID,
 				src: this.rootURI + "content/preferences/preferences.xhtml",
-				stylesheets: [this.rootURI + "content/preferences/preferences.css"],
 				label: "HJFY 翻译",
 				image: this.rootURI + "content/resources/logo-64.png",
 			});
@@ -836,29 +835,39 @@
 		async setupPrefs(win) {
 			const doc = win.document;
 			const root = doc.getElementById("hjfy-main");
-			if (!root || root.dataset.hjfyInitialized === "true") return;
-			root.dataset.hjfyInitialized = "true";
+			if (!root || root.getAttribute("data-hjfy-initialized") === "true") return;
+			root.setAttribute("data-hjfy-initialized", "true");
 			const statusEl = doc.getElementById("hjfy-status");
 			const sessionInput = doc.getElementById("hjfy-session-input");
 			const logoutBtn = doc.getElementById("hjfy-logout");
+			const logoutRow = doc.getElementById("hjfy-logout-row");
+			const advancedToggle = doc.getElementById("hjfy-advanced-toggle");
+			const advancedBody = doc.getElementById("hjfy-advanced-body");
+			if (!statusEl || !sessionInput) return;
 
 			const render = async () => {
 				const u = await this.checkLogin();
 				const loggedIn = !!(u && u.login);
 				if (loggedIn) {
 					statusEl.textContent = "已登录 · " + (u.nickname || "HJFY 用户");
-					statusEl.dataset.state = "success";
+					statusEl.setAttribute("data-state", "success");
 				} else {
 					statusEl.textContent = u && u.error ? "连接失败" : "未登录";
-					statusEl.dataset.state = u && u.error ? "error" : "idle";
+					statusEl.setAttribute("data-state", u && u.error ? "error" : "idle");
 				}
-				if (logoutBtn && logoutBtn.parentElement) logoutBtn.parentElement.hidden = !loggedIn;
+				if (logoutRow) logoutRow.hidden = !loggedIn;
 				sessionInput.value = this.getSessionPref() ? "session=" + this.getSessionPref() : "";
 			};
 
 			// --- ① 微信扫码 ---
 			const wxBtn = doc.getElementById("hjfy-wechat-login");
 			if (wxBtn) wxBtn.addEventListener("click", () => this.openWechatLogin(() => render(), win));
+			if (advancedToggle && advancedBody) {
+				advancedToggle.addEventListener("click", () => {
+					advancedBody.hidden = !advancedBody.hidden;
+					advancedToggle.textContent = advancedBody.hidden ? "高级登录" : "收起高级登录";
+				});
+			}
 
 			// --- ② 手机号 ---
 			const phoneInput = doc.getElementById("hjfy-phone");
