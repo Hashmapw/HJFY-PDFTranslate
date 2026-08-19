@@ -2,16 +2,21 @@
   <img src="content/resources/logo.svg" width="96" alt="HJFY-PDFTranslate"/>
 </p>
 
-# HJFY-PDFTranslate · 幻觉翻译 Zotero 版 PDF 翻译
+<h1 align="center">HJFY-PDFTranslate · 幻觉翻译 Zotero 版 PDF 翻译</h1>
 
 <p align="center">
   <b>在 Zotero 里，一条快捷键把 arXiv 论文变成中文 PDF。</b><br/>
   <img src="https://img.shields.io/badge/Zotero-7%20%2F%208%20%2F%209-blue?style=flat-square" alt="Zotero 7 / 8 / 9"/>
-  <img src="https://img.shields.io/badge/支持-ArXiv%20%2F%20PDF%20上传-3366FF?style=flat-square" alt="ArXiv/PDF"/>
-  <img src="https://img.shields.io/badge/翻译服务-hjfy.top-22CCEE?style=flat-square" alt="hjfy.top"/>
+  <a href="https://arxiv.org" target="_blank">
+    <img src="https://img.shields.io/badge/支持-ArXiv%20%2F%20PDF%20上传-3366FF?style=flat-square" alt="ArXiv/PDF"/>
+  </a>
+  <a href="https://hjfy.top" target="_blank">
+    <img src="https://img.shields.io/badge/翻译服务-hjfy.top-22CCEE?style=flat-square" alt="hjfy.top"/>
+  </a>
 </p>
 
-> **兼容 Zotero 7 / 8 / 9 及后续版本**：插件清单未设版本上限，升级 Zotero 也不影响使用。
+
+> **兼容 Zotero 7 / 8 / 9**：插件清单未设版本上限，升级 Zotero 也不影响使用，未来版本计划持续支持。
 
 ---
 
@@ -19,7 +24,7 @@
 
 读论文最大的坎不是难，而是**英文**。这个插件把你 Zotero 里的 arXiv 论文一键翻译成中文，并把结果**自动挂回原条目**——不用打开网站、不用复制粘贴。
 
-- 它背后的翻译服务是 [幻觉翻译（hjfy.top）](https://hjfy.top/)，本插件是它的 **Zotero 客户端**。
+- 它背后的翻译服务是 [幻觉翻译（hjfy.top）](https://hjfy.top/)，本插件是它的 **Zotero 第三方客户端**。
 - 翻译结果会作为一个标题为 **`PDF-CN`** 的附件出现在论文条目下，和原 PDF 并排，方便对照阅读。
 - 整个过程（翻译排队、进度、完成）都在 Zotero 右下角有提示，不用守着网页。
 
@@ -116,15 +121,9 @@ Zotero → **编辑/设置 → 高级 → HJFY-PDFTranslate**，三种方式任�
 </details>
 
 <details>
-<summary><b>「纯净 PDF」是什么？</b></summary>
-
-就是去掉译文第 1 页顶部那行 `https://hjfy.top/...` 水印链接。勾选后下载的译文会**直接删除**这段文字（不是简单遮盖），标题和正文不受影响。
-</details>
-
-<details>
 <summary><b>支持哪些 Zotero 版本？</b></summary>
 
-Zotero 7 / 8 / 9 及后续版本均可（插件未设版本上限）。只要 Zotero 保持对插件格式的向后兼容，升级 Zotero 都无需重装。
+Zotero 7 / 8 / 9 及后续版本（持续支持中）。只要 Zotero 保持对插件格式的向后兼容，升级 Zotero 都无需重装。
 </details>
 
 ---
