@@ -716,7 +716,8 @@
 				id: "hjfy-pdftranslate-preferences",
 				pluginID: PLUGIN_ID,
 				src: this.rootURI + "content/preferences/preferences.xhtml",
-				label: "HJFY-PDFTranslate",
+				stylesheets: [this.rootURI + "content/preferences/preferences.css"],
+				label: "HJFY 翻译",
 				image: this.rootURI + "content/resources/logo-64.png",
 			});
 			log("prefs pane registered");
@@ -727,6 +728,9 @@
 		 */
 		async setupPrefs(win) {
 			const doc = win.document;
+			const root = doc.getElementById("hjfy-main");
+			if (!root || root.dataset.hjfyInitialized === "true") return;
+			root.dataset.hjfyInitialized = "true";
 			const statusEl = doc.getElementById("hjfy-status");
 			const sessionInput = doc.getElementById("hjfy-session-input");
 

@@ -38,6 +38,10 @@ test("registers a stable Zotero preference pane and waits for completion", async
 	assert.equal(registrations[0].id, "hjfy-pdftranslate-preferences");
 	assert.equal(registrations[0].pluginID, "hjfy-pdftranslate@hjfy.top");
 	assert.equal(registrations[0].src, "file:///addon/content/preferences/preferences.xhtml");
+	assert.equal(registrations[0].label, "HJFY 翻译");
+	assert.deepEqual(Array.from(registrations[0].stylesheets), [
+		"file:///addon/content/preferences/preferences.css",
+	]);
 });
 
 test("a menu registration error does not prevent preference registration", async () => {
@@ -60,6 +64,7 @@ test("preference markup is an XHTML fragment accepted by Zotero", () => {
 	assert.doesNotMatch(source, /<!DOCTYPE|<html(?:\s|>)|<head(?:\s|>)|<body(?:\s|>)/i);
 	assert.match(source, /xmlns:html="http:\/\/www\.w3\.org\/1999\/xhtml"/);
 	assert.match(source, /onload="Zotero\.HJFY\.setupPrefs\(window\)"/);
+	assert.doesNotMatch(source, /<html:style>/);
 	for (const id of [
 		"hjfy-status",
 		"hjfy-wechat-login",

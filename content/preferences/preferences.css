@@ -1,0 +1,96 @@
+#hjfy-main {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 760px;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 1.65;
+}
+
+#hjfy-main > h1 {
+	display: none;
+}
+
+.hjfy-brand {
+	margin: 2px 0;
+	font-size: 19px;
+	font-weight: 700;
+}
+
+.hjfy-sub,
+.hjfy-hint,
+.hjfy-mini {
+	color: GrayText;
+}
+
+.hjfy-sub {
+	margin: 0 0 14px;
+	font-size: 12px;
+}
+
+.hjfy-divider {
+	margin: 12px 0;
+	border-bottom: 1px solid rgba(127, 127, 127, .25);
+}
+
+.hjfy-sec-title {
+	margin: 14px 0 6px;
+	font-size: 14px;
+	font-weight: 700;
+}
+
+.hjfy-status {
+	margin: 8px 0;
+	font-weight: 700;
+}
+
+.hjfy-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 7px 0;
+}
+
+#hjfy-main label {
+	font-size: 13px;
+}
+
+#hjfy-main input[type="text"],
+#hjfy-main input[type="tel"] {
+	box-sizing: border-box;
+	width: min(220px, 100%);
+	padding: 4px 6px;
+	font-size: 13px;
+}
+
+#hjfy-main textarea {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 60px;
+	font-family: monospace;
+}
+
+#hjfy-main button {
+	margin-right: 6px;
+	padding: 3px 12px;
+	font-size: 13px;
+}
+
+.hjfy-hint {
+	margin: 5px 0 2px;
+	font-size: 12px;
+}
+
+#hjfy-main details {
+	margin-top: 8px;
+}
+
+#hjfy-main details summary {
+	cursor: pointer;
+	font-size: 12px;
+}
+
+.hjfy-mini {
+	font-size: 12px;
+}
