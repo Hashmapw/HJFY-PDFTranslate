@@ -32,7 +32,7 @@ jobs:
         run: |
           mkdir -p dist
           zip -rq "dist/hjfy-pdftranslate-${{ steps.ver.outputs.version }}.xpi" \
-            manifest.json chrome.manifest bootstrap.js content icon.png
+            manifest.json chrome.manifest bootstrap.js content icon.png icon@2x.png
           ls -la dist/
 
       - name: Upload build artifact
