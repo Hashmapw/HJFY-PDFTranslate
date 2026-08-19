@@ -6,10 +6,12 @@
 
 <p align="center">
   <b>在 Zotero 里，一条快捷键把 arXiv 论文变成中文 PDF。</b><br/>
-  <img src="https://img.shields.io/badge/Zotero-7-green?style=flat-square" alt="Zotero 7"/>
+  <img src="https://img.shields.io/badge/Zotero-7%20%2F%208%20%2F%209-blue?style=flat-square" alt="Zotero 7 / 8 / 9"/>
   <img src="https://img.shields.io/badge/支持-ArXiv%20%2F%20PDF%20上传-3366FF?style=flat-square" alt="ArXiv/PDF"/>
   <img src="https://img.shields.io/badge/翻译服务-hjfy.top-22CCEE?style=flat-square" alt="hjfy.top"/>
 </p>
+
+> **兼容 Zotero 7 / 8 / 9 及后续版本**：插件清单未设版本上限，升级 Zotero 也不影响使用。
 
 ---
 
@@ -28,6 +30,7 @@
 | 条目「网址」里有 arXiv 链接 | 右键 → **获取翻译 PDF** | 自动翻译并挂上 `PDF-CN` 附件，几秒到几分钟 |
 | 条目「网址」是空的/不是 arXiv | 右键后弹窗里**补一个 arXiv 链接**（会自动写回条目的网址字段），或**选择上传条目自带的 PDF** | 走翻译流程，完成后同样挂 `PDF-CN` |
 | 想再拿一份 | 重复右键 | **自动替换**旧的 `PDF-CN`，不产生重复附件 |
+| 想要更"干净"的译文 | 设置里勾选 **纯净 PDF** | 下载时**直接删除**译文第 1 页顶部的水印链接（hjfy.top 网址），不是简单遮盖 |
 
 另外它还内置了三种登录方式（微信扫码 / 手机号 / 粘贴已有会话），支持退出后重新登录——只在你第一次让网站翻译**新论文或上传 PDF** 时才需要，平时用不上。
 
@@ -110,6 +113,18 @@ Zotero → **编辑/设置 → 高级 → HJFY-PDFTranslate**，三种方式任�
 <summary><b>行为和隐私上有啥要注意？</b></summary>
 
 设置里保存的 `session` 等价于你的 hjfy.top 登录凭证，**不要分享给别人**；不用时可在设置页「退出登录」。也请合理频率使用，别拿它批量刷翻译服务。
+</details>
+
+<details>
+<summary><b>「纯净 PDF」是什么？</b></summary>
+
+就是去掉译文第 1 页顶部那行 `https://hjfy.top/...` 水印链接。勾选后下载的译文会**直接删除**这段文字（不是简单遮盖），标题和正文不受影响。
+</details>
+
+<details>
+<summary><b>支持哪些 Zotero 版本？</b></summary>
+
+Zotero 7 / 8 / 9 及后续版本均可（插件未设版本上限）。只要 Zotero 保持对插件格式的向后兼容，升级 Zotero 都无需重装。
 </details>
 
 ---
