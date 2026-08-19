@@ -1,0 +1,12 @@
+{
+  "addons": {
+    "hjfy-pdftranslate@hjfy.top": {
+      "updates": [
+        {
+          "version": "0.1.0",
+          "update_link": "https://raw.githubusercontent.com/Hashmapw/HJFY-PDFTranslate/main/hjfy-pdftranslate-0.1.0.xpi"
+        }
+      ]
+    }
+  }
+}
