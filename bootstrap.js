@@ -7,7 +7,7 @@ function log(msg) {
 	Zotero.debug("HJFY-PDFTranslate: " + msg);
 }
 
-function startup({ id, version, rootURI }) {
+async function startup({ id, version, rootURI }) {
 	log("startup " + version);
 	try {
 		if (!Zotero.HJFY) {
@@ -19,7 +19,7 @@ function startup({ id, version, rootURI }) {
 			// plugin.js: Zotero 胶水 (定义 Zotero.HJFYPlugin)
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/plugin.js");
 			Zotero.HJFY = new Zotero.HJFYPlugin(rootURI);
-			Zotero.HJFY.init();
+			await Zotero.HJFY.init();
 		}
 	} catch (e) {
 		log("startup error: " + e + "\n" + (e && e.stack ? e.stack : ""));

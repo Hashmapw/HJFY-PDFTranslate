@@ -15,16 +15,20 @@
 	const MENU_ELEMENT_ID = "hjfy-pdftranslate-fetchcn";
 	const MENU_FTL = "hjfy-pdftranslate.ftl";
 
-	let Services = null;
+	let ServicesModule = null;
 	function getServices() {
-		if (!Services) {
+		if (!ServicesModule) {
 			try {
-				Services = ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
+				ServicesModule = ChromeUtils.importESModule("resource://gre/modules/Services.sys.mjs").Services;
 			} catch (e) {
-				Services = null;
+				try {
+					ServicesModule = ChromeUtils.import("resource://gre/modules/Services.jsm").Services;
+				} catch (e2) {
+					ServicesModule = null;
+				}
 			}
 		}
-		return Services;
+		return ServicesModule;
 	}
 
 	let IOUtils = null;
@@ -55,14 +59,18 @@
 		}
 
 		// ================= 生命周期 =================
-		init() {
+		async init() {
 			try {
 				this._registerMenu();
-				this._registerPrefsPane();
-				log("init done");
 			} catch (e) {
-				log("init error", e);
+				log("menu init error", e);
 			}
+			try {
+				await this._registerPrefsPane();
+			} catch (e) {
+				log("prefs init error", e);
+			}
+			log("init done");
 		}
 
 		onMainWindowLoad(win) {
@@ -703,13 +711,13 @@
 		}
 
 		// ================= 设置面板 =================
-		_registerPrefsPane() {
-			Zotero.PreferencePanes.register({
+		async _registerPrefsPane() {
+			await Zotero.PreferencePanes.register({
+				id: "hjfy-pdftranslate-preferences",
 				pluginID: PLUGIN_ID,
 				src: this.rootURI + "content/preferences/preferences.xhtml",
 				label: "HJFY-PDFTranslate",
-				image: this.rootURI + "content/resources/logo.png", // 设置界面左侧图标
-				onLoad: (win) => {},
+				image: this.rootURI + "content/resources/logo-64.png",
 			});
 			log("prefs pane registered");
 		}
@@ -871,7 +879,7 @@
 			try {
 				svc.ww.openWindow(
 					null,
-					"chrome://hjfy-pdftranslate/content/dialogs/wechatLogin.xhtml",
+					this.rootURI + "content/dialogs/wechatLogin.xhtml",
 					"hjfy-wechat-login",
 					"chrome,centerscreen,resizable,width=480,height=580",
 					args
@@ -957,7 +965,7 @@
 				try {
 					svc.ww.openWindow(
 						null,
-						"chrome://hjfy-pdftranslate/content/dialogs/arxivInput.xhtml",
+						this.rootURI + "content/dialogs/arxivInput.xhtml",
 						"hjfy-pdftranslate-input",
 						"chrome,centerscreen,modal,resizable,width=560,height=460",
 						args
