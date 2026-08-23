@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const HJFYLoginConfig = require("../content/scripts/login_config");
 
 function loadPlugin() {
 	const registrations = [];
@@ -20,7 +21,8 @@ function loadPlugin() {
 	};
 	const context = {
 		Zotero,
-		HJFYCore: { createApi: () => ({}) },
+		HJFYCore: { createApi: () => ({ userinfo: async () => ({ login: false }) }) },
+		HJFYLoginConfig,
 		ChromeUtils: {},
 		console,
 	};
@@ -36,9 +38,10 @@ test("registers a stable Zotero preference pane and waits for completion", async
 
 	assert.equal(registrations.length, 1);
 	assert.equal(registrations[0].id, "hjfy-pdftranslate-preferences");
+	assert.equal(registrations[0].label, "HJFY翻译插件");
 	assert.equal(registrations[0].pluginID, "hjfy-pdftranslate@hjfy.top");
 	assert.equal(registrations[0].src, "file:///addon/content/preferences/preferences.xhtml");
-	assert.equal(registrations[0].label, "HJFY 翻译");
+	assert.equal(registrations[0].image, "file:///addon/content/resources/logo-32-padded.png");
 	assert.equal(registrations[0].stylesheets, undefined);
 });
 
@@ -68,13 +71,14 @@ test("preference markup is an XHTML fragment accepted by Zotero", () => {
 	for (const id of [
 		"hjfy-status",
 		"hjfy-wechat-login",
-		"hjfy-phone",
-		"hjfy-phone-code",
+		"hjfy-phone-login",
 		"hjfy-clean-pdf",
 		"hjfy-logout",
-		"hjfy-advanced-toggle",
 	]) {
 		assert.match(source, new RegExp(`id="${id}"`));
+	}
+	for (const removedID of ["hjfy-phone", "hjfy-phone-code", "hjfy-advanced-toggle", "hjfy-session-input"]) {
+		assert.doesNotMatch(source, new RegExp(`id="${removedID}"`));
 	}
 	assert.doesNotMatch(source, /①|②|基于 hjfy\.top|人机验证|不是简单遮盖/);
 });
@@ -83,7 +87,10 @@ test("preference layout keeps styles inside the pane", () => {
 	const source = fs.readFileSync(path.join(__dirname, "../content/preferences/preferences.xhtml"), "utf8");
 
 	assert.match(source, /font:\s*13px\/1\.55/);
+	assert.match(source, /\.hjfy-brand\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*700;/);
+	assert.match(source, /<html:div class="hjfy-brand">幻觉翻译账号登录<\/html:div>/);
 	assert.match(source, /\.hjfy-block/);
 	assert.match(source, /margin:\s*10px 0/);
-	assert.match(source, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+	assert.match(source, /id="hjfy-wechat-login"[\s\S]*id="hjfy-phone-login"[\s\S]*id="hjfy-logout"/);
+	assert.doesNotMatch(source, /hjfy-phone-form|hjfy-advanced/);
 });

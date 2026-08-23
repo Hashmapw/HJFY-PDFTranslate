@@ -19,10 +19,10 @@ const {
 	isScanned,
 	isTerminalFailure,
 } = require("./wechat_qr_state");
+const LOGIN = require("../content/scripts/login_config");
 
 const UA =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151 Safari/537.36";
-const APPID = "wxd7885e86e52192fe";
 const REDIRECT = encodeURIComponent("https://hjfy.top/api/login/callback/wechat?path=%2F");
 const QR_OUT = path.join(__dirname, "wechat-login-qr.jpg");
 
@@ -67,8 +67,8 @@ function request(url, { method = "GET", referer, binary = false } = {}) {
 async function main() {
 	console.log("[1/4] 请求 qrconnect 页面(捕获cookie) -> 提取 uuid");
 	const page = await request(
-		`https://open.weixin.qq.com/connect/qrconnect?appid=${APPID}&scope=snsapi_login` +
-			`&redirect_uri=${REDIRECT}&state=HJFYTEST&login_type=jssdk&self_redirect=false`
+		`https://open.weixin.qq.com/connect/qrconnect?appid=${LOGIN.APP_ID}&scope=snsapi_login` +
+			`&redirect_uri=${REDIRECT}&state=${LOGIN.STATE}&login_type=jssdk&self_redirect=false`
 	);
 	if (page.status !== 200) {
 		console.error("qrconnect 页面失败:", page.status, page.text.slice(0, 160));
@@ -98,7 +98,7 @@ async function main() {
 	while (Date.now() < deadline) {
 		const ts = Date.now() + "000";
 		const lastParam = scanned ? "&last=404" : "";
-		const r = await request(`https://lp.open.weixin.qq.com/connect/l/qrconnect?uuid=${uuid}${lastParam}&_=${ts}`, {
+		const r = await request(`${LOGIN.POLL_BASE}/connect/l/qrconnect?uuid=${uuid}${lastParam}&_=${ts}`, {
 			referer: "https://open.weixin.qq.com/",
 		});
 		const poll = parsePollResponse(r.text || "");
@@ -115,7 +115,7 @@ async function main() {
 			if (isAuthorizationSuccess(poll)) {
 				console.log("[4/4] 授权码已确认");
 				const cb = await request(
-					`https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=HJFYTEST`
+					`https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=${LOGIN.STATE}`
 				);
 				console.log("回调 HTTP:", cb.status);
 				const session = cookieJar.find((cookie) => cookie.name === "session");

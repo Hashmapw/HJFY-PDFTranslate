@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+	xmlns:html="http://www.w3.org/1999/xhtml"
+	id="hjfy-login-browser-window"
+	title="HJFY 登录"
+	windowtype="hjfy:login-browser"
+	orient="vertical">
+	<html:style><![CDATA[
+		#hjfy-login-browser-window { min-width: 400px; min-height: 400px; background: Canvas; color: CanvasText; }
+		#hjfy-login-browser { width: 100%; min-height: 340px; }
+		#hjfy-login-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-top: 1px solid rgba(127,127,127,.3); background: Canvas; color: CanvasText; font: 12px/1.4 sans-serif; }
+		#hjfy-login-status { color: GrayText; }
+		#hjfy-login-close { min-height: 30px; padding: 4px 13px; font: inherit; }
+	]]></html:style>
+	<browser id="hjfy-login-browser"
+		flex="1"
+		type="content"
+		remote="true"
+		maychangeremoteness="false"
+		disablehistory="true"/>
+	<html:div id="hjfy-login-footer">
+		<html:span id="hjfy-login-status">请在页面右上角完成手机号登录</html:span>
+		<html:button id="hjfy-login-close" type="button">取消</html:button>
+	</html:div>
+</window>

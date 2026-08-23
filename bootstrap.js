@@ -3,6 +3,8 @@
  */
 "use strict";
 
+var chromeHandle = null;
+
 function log(msg) {
 	Zotero.debug("HJFY-PDFTranslate: " + msg);
 }
@@ -10,9 +12,16 @@ function log(msg) {
 async function startup({ id, version, rootURI }) {
 	log("startup " + version);
 	try {
+		const addonManagerStartup = Components.classes[
+			"@mozilla.org/addons/addon-manager-startup;1"
+		].getService(Components.interfaces.amIAddonManagerStartup);
+		chromeHandle = addonManagerStartup.registerChrome(Services.io.newURI(rootURI + "manifest.json"), [
+			["content", "hjfy-pdftranslate", rootURI + "content/"],
+		]);
 		if (!Zotero.HJFY) {
 			// Gecko's loadSubScript does not reliably expose UMD globals on a plain
-			// object scope. Load them here and capture them for plugin code.
+			// object scope. Load them in the bootstrap global, capture them, then
+			// remove the temporary names to avoid collisions with other add-ons.
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pdf-lib.min.js");
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pako.min.js");
 			const pdfLib = typeof PDFLib !== "undefined" ? PDFLib : globalThis.PDFLib;
@@ -25,6 +34,7 @@ async function startup({ id, version, rootURI }) {
 			} catch (e) {
 				/* non-configurable globals are harmless after capture */
 			}
+			Services.scriptloader.loadSubScript(rootURI + "content/scripts/login_config.js");
 			// core.js: 纯逻辑 (全局 HJFYCore)
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/core.js");
 			// plugin.js: Zotero 胶水 (定义 Zotero.HJFYPlugin)
@@ -67,6 +77,10 @@ function shutdown() {
 	}
 	Zotero.HJFY = null;
 	Zotero.HJFYVendor = null;
+	if (chromeHandle) {
+		chromeHandle.destruct();
+		chromeHandle = null;
+	}
 }
 
 function install() {

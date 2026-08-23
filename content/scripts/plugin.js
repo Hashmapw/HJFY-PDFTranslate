@@ -14,7 +14,7 @@
 	const MENU_ID = "hjfy-pdftranslate-fetch-cn";
 	const MENU_ELEMENT_ID = "hjfy-pdftranslate-fetchcn";
 	const MENU_FTL = "hjfy-pdftranslate.ftl";
-	const HTML_NS = "http://www.w3.org/1999/xhtml";
+	const LOGIN = HJFYLoginConfig;
 
 	let ServicesModule = null;
 	function getServices() {
@@ -52,6 +52,49 @@
 		return ServicesModule;
 	}
 
+	function getCookieInterface() {
+		try {
+			if (typeof Ci !== "undefined" && Ci.nsICookie) return Ci.nsICookie;
+		} catch (e) {
+			/* Ci is unavailable */
+		}
+		try {
+			if (typeof Components !== "undefined" && Components.interfaces) {
+				return Components.interfaces.nsICookie || null;
+			}
+		} catch (e) {
+			/* Components is unavailable */
+		}
+		return null;
+	}
+
+	function getCookiesForHost(cookieManager, host) {
+		const result = cookieManager.getCookiesFromHost(host, {});
+		if (!result) return [];
+		try {
+			if (typeof result[Symbol.iterator] === "function") return Array.from(result);
+		} catch (e) {
+			/* old XPCOM enumerator */
+		}
+		const cookies = [];
+		if (typeof result.hasMoreElements === "function") {
+			while (result.hasMoreElements()) cookies.push(result.getNext());
+			return cookies;
+		}
+		if (typeof result.length === "number") {
+			for (let index = 0; index < result.length; index++) cookies.push(result[index]);
+		}
+		return cookies;
+	}
+
+	function normalizeCookie(cookie) {
+		const cookieInterface = getCookieInterface();
+		if (cookieInterface && cookie && typeof cookie.QueryInterface === "function") {
+			return cookie.QueryInterface(cookieInterface);
+		}
+		return cookie;
+	}
+
 	function getMainWindow() {
 		try {
 			if (typeof Zotero.getMainWindow === "function") {
@@ -78,59 +121,69 @@
 		throw new Error("Zotero does not provide an external URL opener");
 	}
 
-	function appendHTMLElement(doc, parent, tag, options = {}) {
-		const element = doc.createElementNS(HTML_NS, tag);
-		if (options.className) element.className = options.className;
-		if (options.text !== undefined) element.textContent = options.text;
-		for (const [name, value] of Object.entries(options.attributes || {})) {
-			element.setAttribute(name, value);
-		}
-		parent.appendChild(element);
-		return element;
-	}
-
-	function prepareDialogDocument(win, title, styles) {
-		const doc = win.document;
-		doc.title = title;
-		doc.documentElement.setAttribute("lang", "zh-CN");
-		doc.head.replaceChildren();
-		doc.body.replaceChildren();
-		appendHTMLElement(doc, doc.head, "meta", { attributes: { charset: "utf-8" } });
-		appendHTMLElement(doc, doc.head, "title", { text: title });
-		appendHTMLElement(doc, doc.head, "style", { text: styles });
-		return doc;
-	}
-
-	function openDialogWindow(name, features, args, onReady, parentWindow) {
+	function openBrowserDialogWindow(rootURI, name, features, onReady, parentWindow) {
 		const owner = getMainWindow() || parentWindow;
+		const url = "chrome://hjfy-pdftranslate/content/dialogs/loginBrowser.xhtml";
+		return openChromeDialogWindow(owner, url, name, features, null, onReady);
+	}
+
+	function openChromeDialogWindow(owner, url, name, features, args, onReady) {
 		let win = null;
 		if (owner && typeof owner.openDialog === "function") {
-			win = owner.openDialog("about:blank", name, features, args);
+			win = owner.openDialog(url, name, "chrome," + features, args);
 		} else {
 			const svc = getServices();
 			if (svc && svc.ww && typeof svc.ww.openWindow === "function") {
-				win = svc.ww.openWindow(null, "about:blank", name, features, args);
+				win = svc.ww.openWindow(null, url, name, "chrome," + features, args);
 			}
 		}
 		if (!win) throw new Error("Zotero window service is unavailable");
-
-		const ready = () => {
+		let initialized = false;
+		let attempts = 0;
+		let timer = null;
+		const closeWithError = (error) => {
+			if (initialized) return;
+			initialized = true;
+			if (timer) clearTimeout(timer);
+			log("chrome dialog render error", error);
 			try {
-				onReady(win);
-			} catch (e) {
-				log("dialog render error", e);
-				try {
-					win.close();
-				} catch (closeError) {
-					/* ignore */
-				}
+				win.close();
+			} catch (closeError) {
+				/* ignore */
 			}
 		};
-		if (win.document && (win.document.readyState === "interactive" || win.document.readyState === "complete")) {
-			setTimeout(ready, 0);
-		} else {
-			win.addEventListener("DOMContentLoaded", ready, { once: true });
-		}
+		const ready = () => {
+			if (initialized || win.closed) return;
+			const doc = win.document;
+			let documentURI = "";
+			try {
+				documentURI = doc && (doc.documentURI || doc.URL || (win.location && win.location.href)) || "";
+			} catch (e) {
+				/* the target chrome document is still replacing the placeholder */
+			}
+			if (!doc || doc.readyState === "loading" || documentURI !== url) {
+				if (++attempts <= 200) {
+					timer = setTimeout(ready, 25);
+					return;
+				}
+				closeWithError(new Error("chrome dialog timed out while loading " + url));
+				return;
+			}
+			try {
+				onReady(win);
+				initialized = true;
+				if (timer) clearTimeout(timer);
+			} catch (e) {
+				if (++attempts <= 200 && /controls are unavailable/i.test(String(e && e.message || e))) {
+					timer = setTimeout(ready, 25);
+					return;
+				}
+				closeWithError(e);
+			}
+		};
+		win.addEventListener("DOMContentLoaded", ready, { once: true });
+		win.addEventListener("load", ready, { once: true });
+		timer = setTimeout(ready, 0);
 		return win;
 	}
 
@@ -174,6 +227,7 @@
 
 		// ================= 生命周期 =================
 		async init() {
+			this._purgeLegacySessionPref();
 			try {
 				this._registerMenu();
 			} catch (e) {
@@ -210,17 +264,19 @@
 		}
 
 		// ================= 会话 (session cookie) =================
-		getSessionPref() {
+		_purgeLegacySessionPref() {
 			try {
-				return Zotero.Prefs.get(PREFS + "session", true) || "";
+				// Versions before 0.1.8 duplicated the session token in prefs.js.
+				// Authentication now lives only in the cookie service.
+				Zotero.Prefs.set(PREFS + "session", "", true);
 			} catch (e) {
-				return "";
+				/* preference service unavailable during shutdown */
 			}
 		}
 
 		async checkLogin() {
 			try {
-				const u = await this._request("GET", `${BASE}/api/userinfo`);
+				const u = await this.api.userinfo();
 				return u && u.login ? u : { login: false };
 			} catch (e) {
 				log("checkLogin error", e);
@@ -246,25 +302,32 @@
 			const services = getServices();
 			if (!services || !services.cookies) return { ok: false, msg: "Zotero cookie 服务不可用" };
 			const cm = services.cookies;
-			try {
-				cm.remove(SITE, "session", "/", {});
-			} catch (e) {
-				/* ignore */
-			}
+			this._removeSessionCookie();
 			const expiry = Math.floor(Date.now() / 1000) + 90 * 24 * 3600;
-			try {
-				// 新签名(带 sameSite)
-				cm.add(SITE, "/", "session", value, true, true, false, expiry, {}, Ci.nsICookie.SAMESITE_LAX);
-			} catch (e) {
-				// 老签名(9 参数)
+			const cookieInterface = getCookieInterface();
+			const sameSite = cookieInterface && cookieInterface.SAMESITE_STRICT !== undefined
+				? cookieInterface.SAMESITE_STRICT
+				: cookieInterface && cookieInterface.SAMESITE_LAX !== undefined
+					? cookieInterface.SAMESITE_LAX
+				: 2;
+			const schemeHTTPS = cookieInterface && cookieInterface.SCHEME_HTTPS !== undefined
+				? cookieInterface.SCHEME_HTTPS
+				: 2;
+			const baseArgs = [SITE, "/", "session", value, true, true, false, expiry, {}];
+			let cookieError = null;
+			for (const extraArgs of [[sameSite, schemeHTTPS], [sameSite], []]) {
 				try {
-					cm.add(SITE, "/", "session", value, true, true, false, expiry, {});
-				} catch (e2) {
-					log("saveSession cookie set error", e2);
-					return { ok: false, msg: "写入 cookie 失败: " + e2 };
+					cm.add(...baseArgs, ...extraArgs);
+					cookieError = null;
+					break;
+				} catch (e) {
+					cookieError = e;
 				}
 			}
-			Zotero.Prefs.set(PREFS + "session", value, true);
+			if (cookieError) {
+				log("saveSession cookie set error", cookieError);
+				return { ok: false, msg: "写入 cookie 失败: " + cookieError };
+			}
 			const u = await this.checkLogin();
 			if (u && u.login) {
 				return { ok: true, user: u };
@@ -272,14 +335,25 @@
 			return { ok: false, msg: "会话已保存，但 hjfy.top 验证未通过(可能过期)" };
 		}
 
-		async clearSession() {
+		_removeSessionCookie() {
 			try {
 				const services = getServices();
-				if (services && services.cookies) services.cookies.remove(SITE, "session", "/", {});
+				if (!services || !services.cookies) return;
+				const cm = services.cookies;
+				for (let cookie of getCookiesForHost(cm, SITE)) {
+					cookie = normalizeCookie(cookie);
+					if (cookie.name === "session") {
+						cm.remove(cookie.host || SITE, cookie.name, cookie.path || "/", cookie.originAttributes || {});
+					}
+				}
 			} catch (e) {
-				/* ignore */
+				log("clear session cookie error", e);
 			}
-			Zotero.Prefs.set(PREFS + "session", "", true);
+		}
+
+		async clearSession() {
+			this._removeSessionCookie();
+			this._purgeLegacySessionPref();
 		}
 
 		// ================= HTTP (Zotero.HTTP, 带 cookie) =================
@@ -988,27 +1062,23 @@
 				id: "hjfy-pdftranslate-preferences",
 				pluginID: PLUGIN_ID,
 				src: this.rootURI + "content/preferences/preferences.xhtml",
-				label: "HJFY 翻译",
-				image: this.rootURI + "content/resources/logo-64.png",
+				label: "HJFY翻译插件",
+				image: this.rootURI + "content/resources/logo-32-padded.png",
 			});
 			log("prefs pane registered");
 		}
 
-		/**
-		 * 由 preferences.xhtml 的内联脚本调用：装配 微信/手机号/粘贴 登录与退出
-		 */
-		async setupPrefs(win) {
-			const doc = win.document;
-			const root = doc.getElementById("hjfy-main");
-			if (!root || root.getAttribute("data-hjfy-initialized") === "true") return;
-			root.setAttribute("data-hjfy-initialized", "true");
-			const statusEl = doc.getElementById("hjfy-status");
-			const sessionInput = doc.getElementById("hjfy-session-input");
-			const logoutBtn = doc.getElementById("hjfy-logout");
-			const logoutRow = doc.getElementById("hjfy-logout-row");
-			const advancedToggle = doc.getElementById("hjfy-advanced-toggle");
-			const advancedBody = doc.getElementById("hjfy-advanced-body");
-			if (!statusEl || !sessionInput) return;
+			/**
+			 * 由 preferences.xhtml 调用：装配微信、手机号登录与退出。
+			 */
+			async setupPrefs(win) {
+				const doc = win.document;
+				const root = doc.getElementById("hjfy-main");
+				if (!root || root.getAttribute("data-hjfy-initialized") === "true") return;
+				root.setAttribute("data-hjfy-initialized", "true");
+				const statusEl = doc.getElementById("hjfy-status");
+				const logoutBtn = doc.getElementById("hjfy-logout");
+				if (!statusEl) return;
 
 			const render = async () => {
 				const u = await this.checkLogin();
@@ -1020,85 +1090,15 @@
 					statusEl.textContent = u && u.error ? "连接失败" : "未登录";
 					statusEl.setAttribute("data-state", u && u.error ? "error" : "idle");
 				}
-				if (logoutRow) logoutRow.hidden = !loggedIn;
-				sessionInput.value = this.getSessionPref() ? "session=" + this.getSessionPref() : "";
-			};
+					if (logoutBtn) logoutBtn.disabled = !loggedIn;
+				};
 
-			// --- ① 微信扫码 ---
-			const wxBtn = doc.getElementById("hjfy-wechat-login");
-			if (wxBtn) wxBtn.addEventListener("click", () => this.openWechatLogin(() => render(), win));
-			if (advancedToggle && advancedBody) {
-				advancedToggle.addEventListener("click", () => {
-					advancedBody.hidden = !advancedBody.hidden;
-					advancedToggle.textContent = advancedBody.hidden ? "高级登录" : "收起高级登录";
-				});
-			}
+				const wxBtn = doc.getElementById("hjfy-wechat-login");
+				if (wxBtn) wxBtn.addEventListener("click", () => this.openWechatLogin(() => render(), win));
+				const phoneBtn = doc.getElementById("hjfy-phone-login");
+				if (phoneBtn) phoneBtn.addEventListener("click", () => this.openPhoneLogin(() => render(), win));
 
-			// --- ② 手机号 ---
-			const phoneInput = doc.getElementById("hjfy-phone");
-			const codeInput = doc.getElementById("hjfy-phone-code");
-			const sendBtn = doc.getElementById("hjfy-send-code");
-			const phoneBtn = doc.getElementById("hjfy-phone-login");
-			const sendStatus = doc.getElementById("hjfy-send-status");
-			if (sendBtn) {
-				sendBtn.addEventListener("click", async () => {
-					const phone = (phoneInput.value || "").trim();
-					if (!/^1\d{10}$/.test(phone)) {
-						this.notify("请输入正确的 11 位手机号", "fail");
-						return;
-					}
-					sendStatus.textContent = "发送中...";
-					const r = await this.trySendCode(phone);
-					sendStatus.textContent = r.ok
-						? "验证码已发送"
-						: r.needCaptcha
-							? "请在网页完成人机验证"
-							: r.msg || "发送失败";
-				});
-			}
-			if (phoneBtn) {
-				phoneBtn.addEventListener("click", async () => {
-					const phone = (phoneInput.value || "").trim();
-					const code = (codeInput.value || "").trim();
-					if (!/^1\d{10}$/.test(phone) || !/^\d{4,6}$/.test(code)) {
-						this.notify("请填写正确的手机号和验证码", "fail");
-						return;
-					}
-					const r = await this.phoneLogin(phone, code);
-					if (r && r.ok) {
-						codeInput.value = "";
-						this.notify("手机号登录成功: " + (r.user.nickname || ""), "success");
-					} else {
-						this.notify((r && r.msg) || "登录失败", "fail");
-					}
-					await render();
-				});
-			}
-
-			// --- 高级: 粘贴会话 ---
-			const saveBtn = doc.getElementById("hjfy-save");
-			const clearBtn = doc.getElementById("hjfy-clear");
-			const openBtn = doc.getElementById("hjfy-openlogin");
-			const verifyBtn = doc.getElementById("hjfy-verify");
-			if (saveBtn) {
-				saveBtn.addEventListener("click", async () => {
-					const r = await this.saveSession(sessionInput.value);
-					if (r && r.ok) this.notify("已保存并验证: " + (r.user.nickname || ""), "success");
-					else this.notify((r && r.msg) || "保存失败", "fail");
-					await render();
-				});
-			}
-			if (verifyBtn) verifyBtn.addEventListener("click", () => render());
-			if (clearBtn) {
-				clearBtn.addEventListener("click", async () => {
-					await this.clearSession();
-					await render();
-				});
-			}
-			if (openBtn) openBtn.addEventListener("click", () => openExternalURL("https://hjfy.top/"));
-
-			// --- 退出登录 ---
-			if (logoutBtn) {
+				if (logoutBtn) {
 				logoutBtn.addEventListener("click", async () => {
 					await this.logout();
 					await render();
@@ -1116,42 +1116,82 @@
 				});
 			}
 
-			await render();
-		}
+				await render();
+			}
 
-		// ================= 登录: 微信扫码 =================
-		_renderWechatDialog(win, onLoginSeen) {
-			const doc = prepareDialogDocument(
-				win,
-				"微信扫码登录",
-				`body {
-					box-sizing: border-box;
-					margin: 0;
-					padding: 20px;
-					font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-					color: CanvasText;
-					background: Canvas;
+			openPhoneLogin(onChanged, parentWindow) {
+				// The embedded site and API requests share Zotero's cookie service.
+				// Clear the previous account before navigating to the login page.
+				this._removeSessionCookie();
+				this._purgeLegacySessionPref();
+				try {
+					const owner = getMainWindow() || parentWindow;
+					return openBrowserDialogWindow(
+						this.rootURI,
+						"hjfy-phone-login",
+						"centerscreen,resizable=yes,width=900,height=700",
+						(win) => this._renderPhoneWebsiteLogin(win, onChanged),
+						owner
+					);
+				} catch (e) {
+					log("openPhoneLogin error", e);
+					this.notify("打开手机号登录窗口失败: " + e, "fail");
+					return null;
 				}
-				h1 { margin: 0 0 6px; font-size: 18px; }
-				p { margin: 0 0 14px; color: GrayText; }
-				.qr-stage { display: grid; place-items: center; box-sizing: border-box; width: 100%; height: 320px; border: 1px solid rgba(127, 127, 127, .3); }
-				.qr-stage img { display: block; width: 280px; height: 280px; object-fit: contain; }
-				footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
-				.status { color: GrayText; font-size: 12px; }
-				button { min-height: 31px; padding: 4px 14px; font: inherit; }`
-			);
-			appendHTMLElement(doc, doc.body, "h1", { text: "微信扫码登录" });
-			appendHTMLElement(doc, doc.body, "p", { text: "使用微信扫码并在手机上确认" });
-			const stage = appendHTMLElement(doc, doc.body, "div", { className: "qr-stage" });
-			const image = appendHTMLElement(doc, stage, "img", { attributes: { alt: "微信登录二维码" } });
-			image.hidden = true;
-			const footer = appendHTMLElement(doc, doc.body, "footer");
-			const status = appendHTMLElement(doc, footer, "span", { className: "status", text: "二维码加载中..." });
-			const closeButton = appendHTMLElement(doc, footer, "button", { text: "关闭", attributes: { type: "button" } });
+			}
+
+			_renderPhoneWebsiteLogin(win, onLoginSeen) {
+				const doc = win.document;
+				const browser = doc.getElementById("hjfy-login-browser");
+				const status = doc.getElementById("hjfy-login-status");
+				const closeButton = doc.getElementById("hjfy-login-close");
+				if (!browser || !status || !closeButton) throw new Error("Login browser controls are unavailable");
+				doc.title = "手机号登录";
+				closeButton.addEventListener("click", () => win.close());
+
+				let completed = false;
+				let checking = false;
+				const verifyLogin = async () => {
+					if (completed || checking || win.closed) return;
+					checking = true;
+					try {
+						const user = await this.checkLogin();
+						if (!user || !user.login || completed || win.closed) return;
+						completed = true;
+						status.textContent = "登录成功";
+						this.notify("手机号登录成功: " + (user.nickname || ""), "success");
+						if (onLoginSeen) await onLoginSeen();
+						if (!win.closed) win.close();
+					} finally {
+						checking = false;
+					}
+				};
+				const onLoad = () => {
+					if (!completed) status.textContent = "请在页面右上角完成手机号登录";
+					return verifyLogin();
+				};
+				browser.addEventListener("load", onLoad, true);
+				const timer = setInterval(verifyLogin, 1000);
+				win.addEventListener("unload", () => {
+					clearInterval(timer);
+					browser.removeEventListener("load", onLoad, true);
+				}, { once: true });
+				status.textContent = "请在页面右上角完成手机号登录";
+				browser.setAttribute("src", `${BASE}/?hjfy-login=${Date.now()}`);
+				win.focus();
+			}
+
+			// ================= 登录: 微信扫码 =================
+		_renderWechatDialog(win, onLoginSeen) {
+			const doc = win.document;
+			const image = doc.getElementById("hjfy-wechat-qr");
+			const status = doc.getElementById("hjfy-wechat-status");
+			const closeButton = doc.getElementById("hjfy-wechat-close");
+			if (!image || !status || !closeButton) throw new Error("WeChat login controls are unavailable");
 			closeButton.addEventListener("click", () => win.close());
 			this._runWechatLogin(win, image, status, onLoginSeen).catch((e) => {
 				log("WeChat login flow error", e);
-				if (!win.closed) status.textContent = "微信登录服务连接失败";
+				if (!win.closed) status.textContent = "微信登录失败，请关闭后重试";
 			});
 			win.focus();
 		}
@@ -1168,10 +1208,10 @@
 		}
 
 		async _runWechatLogin(win, image, status, onLoginSeen) {
-			const redirect = encodeURIComponent("https://hjfy.top/api/login/callback/wechat?path=%2F");
+			const redirect = encodeURIComponent(BASE + LOGIN.CALLBACK_PATH);
 			const pageURL =
-				"https://open.weixin.qq.com/connect/qrconnect?appid=wxd7885e86e52192fe&scope=snsapi_login" +
-				"&redirect_uri=" + redirect + "&state=HJFYZT&login_type=jssdk&self_redirect=false";
+				`https://open.weixin.qq.com/connect/qrconnect?appid=${LOGIN.APP_ID}&scope=snsapi_login` +
+				"&redirect_uri=" + redirect + `&state=${encodeURIComponent(LOGIN.STATE)}&login_type=jssdk&self_redirect=false`;
 			const pageResponse = await Zotero.HTTP.request("GET", pageURL, {
 				useCookieService: true,
 				responseType: "text",
@@ -1195,17 +1235,25 @@
 			let scanned = false;
 			while (!win.closed && Date.now() < deadline) {
 				const last = scanned ? "&last=404" : "";
-				const pollResponse = await Zotero.HTTP.request(
-					"GET",
-					"https://long.open.weixin.qq.com/connect/l/qrconnect?uuid=" +
-						encodeURIComponent(uuid) + last + "&_=" + Date.now() + "000",
-					{
-						useCookieService: true,
-						responseType: "text",
-						timeout: 40000,
-						headers: { Referer: "https://open.weixin.qq.com/" },
-					}
-				);
+				let pollResponse;
+				try {
+					pollResponse = await Zotero.HTTP.request(
+						"GET",
+						LOGIN.POLL_BASE + "/connect/l/qrconnect?uuid=" +
+							encodeURIComponent(uuid) + last + "&_=" + Date.now() + "000",
+						{
+							useCookieService: true,
+							responseType: "text",
+							timeout: 40000,
+							headers: { Referer: "https://open.weixin.qq.com/" },
+						}
+					);
+				} catch (e) {
+					log("WeChat poll retry", e);
+					status.textContent = scanned ? "已扫码，正在等待登录确认..." : "微信连接波动，正在重试...";
+					await new Promise((resolve) => setTimeout(resolve, 1500));
+					continue;
+				}
 				const poll = this._parseWechatPoll(pollResponse.responseText || pollResponse.response || "");
 				if (!poll) throw new Error("Unexpected WeChat poll response");
 				if (poll.code === 404) {
@@ -1215,11 +1263,18 @@
 					status.textContent = "正在完成登录...";
 					await Zotero.HTTP.request(
 						"GET",
-						`${BASE}/api/login/callback/wechat?code=${encodeURIComponent(poll.wxCode)}&state=HJFYZT`,
-						{ useCookieService: true, responseType: "text", timeout: 30000, successCodes: [200, 302] }
+						`${BASE}${LOGIN.CALLBACK_PATH}&code=${encodeURIComponent(poll.wxCode)}&state=${encodeURIComponent(LOGIN.STATE)}`,
+						{
+							useCookieService: true,
+							responseType: "text",
+							timeout: 30000,
+							successCodes: [200, 302, 303, 307, 308],
+						}
 					);
 					const session = this._readSessionCookie();
 					if (!session) throw new Error("HJFY callback did not create a session");
+					const user = await this._request("GET", `${BASE}/api/userinfo`);
+					if (!user || !user.login) throw new Error("HJFY callback session was not accepted");
 					await onLoginSeen(session);
 					return;
 				} else if (poll.code === 403) {
@@ -1237,11 +1292,12 @@
 			if (!win.closed) status.textContent = "二维码已过期，请重新打开";
 		}
 
-		/**
-		 * 打开微信扫码登录窗口(非模态)。窗口内走完回调后 onSuccess 会带回 session。
-		 * 兜底: 若二维码窗口被顶层跳转导航走, 本函数会轮询本地 cookie 直到登录完成或超时。
-		 */
+			/**
+			 * 打开微信扫码登录窗口(非模态)。官网完成 OAuth 回调并写入 cookie，
+			 * 本函数轮询 Zotero cookie service，验证成功后保存 session。
+			 */
 		openWechatLogin(onChanged, parentWindow) {
+			this.clearSession();
 			let done = false;
 			let dialogWindow = null;
 			const onLoginSeen = async (sessionValue) => {
@@ -1258,18 +1314,11 @@
 				if (onChanged) onChanged();
 			};
 			// 兜底检测: 某些情况下二维码窗口被顶层跳转导航走导致内部脚本失效, 这里从 cookie 库轮询
-			const pre = (() => {
-				try {
-					return this._readSessionCookie();
-				} catch (e) {
-					return null;
-				}
-			})();
 			const started = Date.now();
 			const timer = setInterval(async () => {
 				try {
 					const s = this._readSessionCookie();
-					if (s && (!pre || s !== pre)) {
+					if (s) {
 						clearInterval(timer);
 						onLoginSeen(s);
 					} else if (Date.now() - started > 11 * 60 * 1000) {
@@ -1279,21 +1328,16 @@
 					clearInterval(timer);
 				}
 			}, 2000);
-			const args = {
-				services: getServices(),
-				onSuccess: (sessionValue) => {
-					clearInterval(timer);
-					onLoginSeen(sessionValue);
-				},
-			};
-			try {
-				dialogWindow = openDialogWindow(
-					"hjfy-wechat-login",
-					"centerscreen,resizable=yes,width=480,height=560",
-					args,
-					(win) => this._renderWechatDialog(win, onLoginSeen),
-					parentWindow
-				);
+				try {
+					const owner = getMainWindow() || parentWindow;
+					dialogWindow = openChromeDialogWindow(
+						owner,
+						"chrome://hjfy-pdftranslate/content/dialogs/wechatLogin.xhtml",
+						"hjfy-wechat-login",
+						"centerscreen,resizable=no,width=420,height=430",
+						null,
+						(win) => this._renderWechatDialog(win, onLoginSeen)
+					);
 				dialogWindow.addEventListener("unload", () => clearInterval(timer), { once: true });
 			} catch (e) {
 				clearInterval(timer);
@@ -1305,41 +1349,208 @@
 		_readSessionCookie() {
 			const services = getServices();
 			if (!services || !services.cookies) throw new Error("Zotero cookie service is unavailable");
-			const cm = services.cookies.getCookiesFromHost(SITE, {});
-			while (cm.hasMoreElements()) {
-				const c = cm.getNext().QueryInterface(Ci.nsICookie);
+			for (let c of getCookiesForHost(services.cookies, SITE)) {
+				c = normalizeCookie(c);
 				if (c.name === "session") return c.value;
 			}
 			return null;
 		}
 
 		// ================= 登录: 手机号 =================
-		/** 发送验证码: 先尝试直连接口; 若要求人机识别则打开网站由用户过滑块 */
-		async trySendCode(phone) {
+		async _sendPhoneCode(phone, captchaVerifyParam) {
 			try {
-				const j = await this._request("POST", `${BASE}/api/sendCode`, {
-					headers: { "Content-Type": "application/json" },
-					payload: JSON.stringify({ phone }),
-				});
+				const j = await this.api.sendCode(phone, captchaVerifyParam);
 				if (j && j.status === 0) return { ok: true };
-				if (j && j.status === 400) {
-					openExternalURL("https://hjfy.top/");
-					return { ok: false, needCaptcha: true, msg: j.msg };
-				}
 				return { ok: false, msg: (j && j.msg) || "发送失败" };
 			} catch (e) {
-				log("trySendCode error", e);
+				log("sendPhoneCode error", e);
 				return { ok: false, msg: String(e) };
 			}
+		}
+
+		_renderSiteLoginBrowser(win, mode, phone, onPhoneSent) {
+			const doc = win.document;
+			const browser = doc.getElementById("hjfy-login-browser");
+			const status = doc.getElementById("hjfy-login-status");
+			const closeButton = doc.getElementById("hjfy-login-close");
+			if (!browser || !status || !closeButton) throw new Error("Login browser controls are unavailable");
+			doc.title = mode === "wechat" ? "微信扫码登录" : "人机验证";
+			closeButton.addEventListener("click", () => win.close());
+
+			const initialManager = browser.messageManager;
+			if (!initialManager || typeof initialManager.loadFrameScript !== "function") {
+				throw new Error("Zotero content message manager is unavailable");
+			}
+			const frameSource = `
+				if (!this.__hjfySiteLoginInstalled) {
+					this.__hjfySiteLoginInstalled = true;
+					(() => {
+					const config = ${JSON.stringify({ mode, phone })};
+					const report = (kind, text) => sendAsyncMessage("hjfy:login-state", { kind, text });
+					const waitFor = async (lookup, timeout = 30000) => {
+						const deadline = Date.now() + timeout;
+						while (Date.now() < deadline) {
+							const value = lookup();
+							if (value) return value;
+							await new Promise((resolve) => content.setTimeout(resolve, 100));
+						}
+						return null;
+					};
+					let preparing = false;
+					let preparedDocument = null;
+					const prepare = async () => {
+						const siteDoc = content.document;
+						if (
+							preparing ||
+							preparedDocument === siteDoc ||
+							!siteDoc ||
+							!/^https:\\/\\/hjfy\\.top\\//.test(siteDoc.location.href)
+						) return;
+						preparing = true;
+						try {
+							report("status", "正在准备登录...");
+								const loginButton = await waitFor(() =>
+									Array.from(siteDoc.querySelectorAll("button")).find((button) => button.textContent.trim() === "登录")
+								);
+								if (!loginButton) throw new Error("网站登录页面结构已更新: login-button");
+								loginButton.click();
+								const sendButton = await waitFor(() => siteDoc.getElementById("send-code"));
+								if (!sendButton) throw new Error("网站登录页面结构已更新: send-code");
+								const phoneSection = sendButton.parentElement && sendButton.parentElement.parentElement;
+								const panel = phoneSection && phoneSection.parentElement;
+								if (!panel) throw new Error("网站登录页面结构已更新: login-panel");
+							panel.setAttribute("data-hjfy-login-panel", config.mode);
+							const isolateStyle = siteDoc.createElement("style");
+							isolateStyle.textContent = [
+								"body > * { visibility: hidden !important; }",
+								"[data-hjfy-login-panel], [data-hjfy-login-panel] * { visibility: visible !important; }",
+								"[data-hjfy-login-panel] { top: 16px !important; right: auto !important; left: 50% !important; transform: translateX(-50%) !important; border-radius: 8px !important; }",
+								"#aliyunCaptcha-mask, #aliyunCaptcha-mask *, #aliyunCaptcha-window-popup, #aliyunCaptcha-window-popup * { visibility: visible !important; }",
+							].join("\\n");
+							siteDoc.head.appendChild(isolateStyle);
+							const wechatSection = siteDoc.getElementById("wx_qrcode")?.parentElement;
+							const divider = phoneSection.previousElementSibling;
+							if (config.mode === "wechat") {
+								phoneSection.style.display = "none";
+								if (divider) divider.style.display = "none";
+								report("status", "请使用微信扫码并在手机上确认");
+							} else {
+								if (wechatSection) wechatSection.style.display = "none";
+								if (divider) divider.style.display = "none";
+									const phoneInput = siteDoc.getElementById("contactNumber");
+									if (!phoneInput) throw new Error("网站登录页面结构已更新: contactNumber");
+									const valueSetter = Object.getOwnPropertyDescriptor(content.HTMLInputElement.prototype, "value").set;
+									valueSetter.call(phoneInput, config.phone);
+									phoneInput.dispatchEvent(new content.Event("input", { bubbles: true }));
+									report("status", "请点击发送验证码并完成人机验证");
+									const reportIfSent = () => {
+										if (/已发送/.test(sendButton.textContent || "")) {
+											report("sent", "验证码已发送");
+											return true;
+										}
+										return false;
+									};
+									if (!reportIfSent()) {
+										const observer = new content.MutationObserver(() => {
+											if (reportIfSent()) observer.disconnect();
+										});
+										observer.observe(sendButton, { childList: true, subtree: true, characterData: true });
+										content.setTimeout(() => observer.disconnect(), 10 * 60 * 1000);
+									}
+								}
+							preparedDocument = siteDoc;
+						} catch (error) {
+							report("error", String(error));
+						} finally {
+							preparing = false;
+						}
+					};
+					addEventListener("DOMContentLoaded", prepare, true);
+					addEventListener("pageshow", prepare, true);
+					prepare();
+					})();
+				}
+			`;
+			const frameURL = "data:application/javascript;charset=utf-8," + encodeURIComponent(frameSource);
+			let completed = false;
+			const attachedManagers = [];
+			const onState = (message) => {
+				const data = message && message.data ? message.data : {};
+				if (data.kind === "status") {
+					status.textContent = data.text || "";
+				}
+				else if (data.kind === "sent" && !completed) {
+					completed = true;
+					status.textContent = data.text || "验证码已发送";
+					if (onPhoneSent) onPhoneSent({ ok: true });
+					setTimeout(() => {
+						if (!win.closed) win.close();
+					}, 500);
+				} else if (data.kind === "error") {
+					log("site login browser error", data.text || "unknown frame error");
+					status.textContent = /网站登录页面结构已更新/.test(data.text || "")
+						? "网站登录页面已更新，请关闭窗口并更新插件"
+						: "登录组件加载失败，请关闭后重试";
+				}
+			};
+			const injectFrameScript = () => {
+				if (win.closed) return;
+				const manager = browser.messageManager;
+				if (!manager || typeof manager.loadFrameScript !== "function") return;
+				if (!attachedManagers.includes(manager)) {
+					manager.addMessageListener("hjfy:login-state", onState);
+					attachedManagers.push(manager);
+				}
+				manager.loadFrameScript(frameURL, false);
+			};
+			injectFrameScript();
+			browser.addEventListener("load", injectFrameScript, true);
+			win.addEventListener("unload", () => {
+				browser.removeEventListener("load", injectFrameScript, true);
+				try {
+					for (const manager of attachedManagers) {
+						manager.removeMessageListener("hjfy:login-state", onState);
+					}
+				} catch (e) {
+					/* browser process already closed */
+				}
+			}, { once: true });
+			browser.setAttribute("src", `${BASE}/`);
+			win.focus();
+		}
+
+		openPhoneCaptcha(phone, parentWindow) {
+			return new Promise((resolve) => {
+				let settled = false;
+				const finish = (result) => {
+					if (settled) return;
+					settled = true;
+					resolve(result);
+				};
+				try {
+					const dialogWindow = openBrowserDialogWindow(
+							this.rootURI,
+							"hjfy-phone-captcha",
+							"centerscreen,resizable=yes,width=430,height=440",
+						(win) => this._renderSiteLoginBrowser(win, "phone", phone, finish),
+						parentWindow
+					);
+					dialogWindow.addEventListener("unload", () => finish({ ok: false, cancelled: true }), { once: true });
+				} catch (e) {
+					log("openPhoneCaptcha error", e);
+					finish({ ok: false, msg: "打开人机验证窗口失败: " + e });
+				}
+			});
+		}
+
+		async trySendCode(phone, parentWindow) {
+			return await this.openPhoneCaptcha(phone, parentWindow);
 		}
 
 		/** 手机号 + 验证码登录 -> session -> 保存并验证 */
 		async phoneLogin(phone, code) {
 			try {
-				const j = await this._request("POST", `${BASE}/api/phoneLogin`, {
-					headers: { "Content-Type": "application/json" },
-					payload: JSON.stringify({ phone, code }),
-				});
+				const j = await this.api.phoneLogin(phone, code);
 				if (!j || j.status !== 0) {
 					return { ok: false, msg: (j && j.msg) || "登录失败" };
 				}
@@ -1355,7 +1566,7 @@
 		// ================= 退出登录 =================
 		async logout() {
 			try {
-				await this._request("POST", `${BASE}/api/logout`);
+				await this.api.logout();
 			} catch (e) {
 				log("logout api error", e);
 			}
@@ -1364,35 +1575,17 @@
 
 		// ================= 输入弹窗（无 arXiv 链接时） =================
 		_renderArxivDialog(win, args) {
-			const doc = prepareDialogDocument(
-				win,
-				"获取翻译 PDF",
-				`body {
-					box-sizing: border-box;
-					margin: 0;
-					padding: 22px;
-					font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-					color: CanvasText;
-					background: Canvas;
-				}
-				h1 { margin: 0 0 6px; font-size: 18px; }
-				p { margin: 0 0 18px; color: GrayText; }
-				label { display: block; margin-bottom: 7px; font-weight: 600; }
-				input { box-sizing: border-box; width: 100%; height: 34px; padding: 5px 8px; font: inherit; }
-				footer { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 18px; }
-				button { min-height: 31px; padding: 4px 13px; font: inherit; }`
-			);
-			appendHTMLElement(doc, doc.body, "h1", { text: "获取翻译 PDF" });
-			appendHTMLElement(doc, doc.body, "p", { text: args.itemTitle || "当前条目没有 arXiv 链接" });
-			const inputID = "hjfy-arxiv-input";
-			appendHTMLElement(doc, doc.body, "label", { text: "arXiv 链接或 ID", attributes: { for: inputID } });
-			const input = appendHTMLElement(doc, doc.body, "input", {
-				attributes: { id: inputID, type: "text", placeholder: "2506.17310" },
-			});
-			const footer = appendHTMLElement(doc, doc.body, "footer");
-			const fetchButton = appendHTMLElement(doc, footer, "button", { text: "获取翻译", attributes: { type: "button" } });
-			const uploadButton = appendHTMLElement(doc, footer, "button", { text: "上传 PDF", attributes: { type: "button" } });
-			const cancelButton = appendHTMLElement(doc, footer, "button", { text: "取消", attributes: { type: "button" } });
+			const doc = win.document;
+			const description = doc.getElementById("hjfy-arxiv-description");
+			const input = doc.getElementById("hjfy-arxiv-input");
+			const fetchButton = doc.getElementById("hjfy-arxiv-fetch");
+			const uploadButton = doc.getElementById("hjfy-arxiv-upload");
+			const cancelButton = doc.getElementById("hjfy-arxiv-cancel");
+			if (!description || !input || !fetchButton || !uploadButton || !cancelButton) {
+				throw new Error("arXiv dialog controls are unavailable");
+			}
+			log("arXiv action dialog ready");
+			description.textContent = args.itemTitle || "当前条目没有 arXiv 链接";
 			const finish = (choice) => {
 				args.done(choice);
 				win.close();
@@ -1411,6 +1604,7 @@
 		openArxivDialog(item) {
 			return new Promise((resolve) => {
 				let settled = false;
+				let dialogReady = false;
 				const done = (choice) => {
 					if (settled) return;
 					settled = true;
@@ -1426,15 +1620,35 @@
 					/* ignore */
 				}
 				try {
-					const dialogWindow = openDialogWindow(
+					const dialogURL = "chrome://hjfy-pdftranslate/content/dialogs/arxivDialog.xhtml";
+					const dialogWindow = openChromeDialogWindow(
+						getMainWindow(),
+						dialogURL,
 						"hjfy-pdftranslate-input",
 						"centerscreen,resizable=yes,width=560,height=330",
 						args,
-						(win) => this._renderArxivDialog(win, args)
+						(win) => {
+							this._renderArxivDialog(win, args);
+							dialogReady = true;
+						}
 					);
-					dialogWindow.addEventListener("unload", () => done({ mode: "cancel" }), { once: true });
+					dialogWindow.addEventListener("unload", () => {
+						if (!dialogReady) {
+							setTimeout(() => {
+								if (dialogWindow.closed && !settled) {
+									this.notify("获取翻译窗口加载失败，未执行任何操作", "fail");
+									done({ mode: "cancel" });
+								}
+							}, 0);
+							return;
+						}
+						if (settled) return;
+						this.notify("获取翻译窗口已关闭，未执行任何操作", "fail");
+						done({ mode: "cancel" });
+					});
 				} catch (e) {
 					log("openArxivDialog error", e);
+					this.notify("无法打开获取翻译窗口: " + (e && e.message ? e.message : e), "fail");
 					done({ mode: "cancel" });
 				}
 			});

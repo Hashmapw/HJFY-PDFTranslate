@@ -19,7 +19,7 @@ function unescapeJsString(value) {
 }
 
 /**
- * Parse the response from lp.open.weixin.qq.com/connect/l/qrconnect.
+ * Parse the JavaScript response from the configured qrconnect polling host.
  * The endpoint has used both single and double quotes over time.
  */
 function parsePollResponse(body) {
