@@ -701,12 +701,14 @@
 		}
 
 		async handleItem(item) {
-			const url = item.getField("url");
-			const id = HJFYCore.parseArxivId(url || "");
+			const id = this._getItemArxivId(item);
 			if (id) {
+				log("item arXiv association found", { itemID: item.id, arxivId: id });
 				return await this.runArxiv(item, id);
 			}
+			log("item has no arXiv association; opening action dialog", { itemID: item.id });
 			const choice = await this.openArxivDialog(item);
+			log("item action dialog result", { itemID: item.id, mode: choice && choice.mode });
 			if (!choice || choice.mode === "cancel") return null;
 			if (choice.mode === "upload") {
 				return await this.runUpload(item, null);
@@ -717,26 +719,52 @@
 					this.notify("未识别到有效的 arXiv 链接", "fail");
 					return null;
 				}
-				// 用户输入的 arXiv 链接写入条目「网址」字段(仅当该字段当前无效时)
-				await this._ensureItemUrl(item, cid);
+				await this._rememberItemArxiv(item, cid);
 				return await this.runArxiv(item, cid);
 			}
 			return null;
 		}
 
-		/**
-		 * 把有效的 arXiv ID 写入条目「网址」字段(已有有效链接则跳过)
-		 */
-		async _ensureItemUrl(item, arxivId) {
+		_getItemArxivId(item) {
 			try {
-				const cur = item.getField("url") || "";
-				if (HJFYCore.parseArxivId(cur)) return; // 已是有效 arXiv 链接, 不改
-				item.setField("url", `https://arxiv.org/abs/${arxivId}`);
-				await item.saveTx();
-				log("已更新条目网址 ->", `https://arxiv.org/abs/${arxivId}`);
+				const fromUrl = HJFYCore.parseArxivId(item.getField("url") || "");
+				if (fromUrl) return fromUrl;
+				const extra = item.getField("extra") || "";
+				for (const line of String(extra).split(/\r?\n/)) {
+					const match = /^\s*arxiv(?:\s+id)?\s*:\s*(.*?)\s*$/i.exec(line);
+					const fromExtra = match && HJFYCore.parseArxivId(match[1]);
+					if (fromExtra) return fromExtra;
+				}
 			} catch (e) {
-				log("_ensureItemUrl error", e);
+				log("读取条目 arXiv ID 失败", e);
 			}
+			return null;
+		}
+
+		/** Store the association without replacing the publisher URL. */
+		async _rememberItemArxiv(item, arxivId) {
+			const normalized = HJFYCore.parseArxivId(arxivId);
+			if (!normalized) throw new Error("无效的 arXiv ID: " + arxivId);
+			try {
+				const extra = String(item.getField("extra") || "");
+				const lines = extra ? extra.split(/\r?\n/) : [];
+				const index = lines.findIndex((line) => /^\s*arxiv(?:\s+id)?\s*:/i.test(line));
+				const association = `arXiv: ${normalized}`;
+				if (index >= 0) {
+					if (lines[index] === association) return false;
+					lines[index] = association;
+				} else {
+					lines.push(association);
+				}
+				item.setField("extra", lines.join("\n"));
+				await item.saveTx();
+			} catch (e) {
+				log("_rememberItemArxiv error", e);
+				this.notify("未能把 arXiv ID 写入条目“其他”，仍继续获取翻译: " + (e && e.message ? e.message : e), "fail");
+				return false;
+			}
+			log("已更新条目其他字段 -> arXiv:", normalized);
+			return true;
 		}
 
 		/**
@@ -817,22 +845,35 @@
 		 * 上传 PDF 翻译流程: 上传 -> 轮询 -> 取文件 -> 下载 -> 挂 PDF-CN
 		 */
 		async runUpload(item, optPdfPath) {
-			let pdf = null;
-			if (optPdfPath) {
-				pdf = { path: optPdfPath, fileName: optPdfPath.split(/[\\/]/).pop() };
-			} else {
-				pdf = await this.getItemPdfPath(item);
-			}
-			if (!pdf) {
-				this.notify("该条目没有可上传的 PDF 附件", "fail");
-				return null;
-			}
-
-			const { pitem, pw } = this._newProgress("上传 PDF 翻译中...");
+			const { pitem, pw } = this._newProgress("正在检查登录状态...");
 			this._onProgress = (loaded, total) => pitem.setProgress(Math.round((loaded / total) * 100), 100);
 			try {
+				const user = await this.checkLogin();
+				if (!user.login) {
+					this._endProgress(pw);
+					this.notify(
+						user.error
+							? "无法确认登录状态: " + user.error
+							: "上传翻译需要登录，请先在 设置→HJFY-PDFTranslate 里登录",
+						"fail"
+					);
+					return null;
+				}
+				pitem.setText("正在查找条目 PDF...");
+				const pdf = optPdfPath
+					? { path: optPdfPath, fileName: optPdfPath.split(/[\\/]/).pop() }
+					: await this.getItemPdfPath(item);
 				pitem.setText("上传 PDF...");
 				const upResp = await this.uploadFile(pdf);
+				// 服务端用业务状态 302 表示上传件已识别为 arXiv 论文。
+				if (upResp && upResp.arxivId) {
+					const detectedID = HJFYCore.parseArxivId(upResp.arxivId);
+					if (!detectedID) throw new Error("上传返回了无效的 arXiv ID: " + upResp.arxivId);
+					await this._rememberItemArxiv(item, detectedID);
+					this._endProgress(pw);
+					this.notify("检测到 arXiv 论文，改用 arXiv 翻译流程: " + detectedID);
+					return await this.runArxiv(item, detectedID);
+				}
 				if (!upResp || upResp.status !== 0) {
 					this._endProgress(pw);
 					const msg =
@@ -841,12 +882,6 @@
 							: (upResp && upResp.msg) || "上传失败";
 					this.notify(msg, "fail");
 					return null;
-				}
-				// 上传的 PDF 被识别为 arXiv 论文(302 -> arxivId)，自动改走 arXiv 流程
-				if (upResp.arxivId) {
-					this._endProgress(pw);
-					this.notify("检测到 arXiv 论文，改用 arXiv 翻译流程: " + upResp.arxivId);
-					return await this.runArxiv(item, upResp.arxivId);
 				}
 				const fileKey = (upResp.data && upResp.data.fileKey) || upResp.fileKey;
 				if (!fileKey) {
