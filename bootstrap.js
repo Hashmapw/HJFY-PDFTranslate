@@ -11,9 +11,20 @@ async function startup({ id, version, rootURI }) {
 	log("startup " + version);
 	try {
 		if (!Zotero.HJFY) {
-			// vendor: pdf-lib (PDF处理) / pako (zlib解压), 挂到全局 PDFLib / pako
+			// Gecko's loadSubScript does not reliably expose UMD globals on a plain
+			// object scope. Load them here and capture them for plugin code.
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pdf-lib.min.js");
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/vendor/pako.min.js");
+			const pdfLib = typeof PDFLib !== "undefined" ? PDFLib : globalThis.PDFLib;
+			const pakoLib = typeof pako !== "undefined" ? pako : globalThis.pako;
+			if (!pdfLib || !pakoLib) throw new Error("PDF cleaning libraries failed to load");
+			Zotero.HJFYVendor = Object.freeze({ PDFLib: pdfLib, pako: pakoLib });
+			try {
+				delete globalThis.PDFLib;
+				delete globalThis.pako;
+			} catch (e) {
+				/* non-configurable globals are harmless after capture */
+			}
 			// core.js: 纯逻辑 (全局 HJFYCore)
 			Services.scriptloader.loadSubScript(rootURI + "content/scripts/core.js");
 			// plugin.js: Zotero 胶水 (定义 Zotero.HJFYPlugin)
@@ -55,6 +66,7 @@ function shutdown() {
 		}
 	}
 	Zotero.HJFY = null;
+	Zotero.HJFYVendor = null;
 }
 
 function install() {

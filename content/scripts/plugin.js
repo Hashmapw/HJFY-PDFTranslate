@@ -134,16 +134,26 @@
 		return win;
 	}
 
-	let IOUtils = null;
+	let IOUtilsModule = null;
 	function getIOUtils() {
-		if (!IOUtils) {
+		if (!IOUtilsModule) {
 			try {
-				IOUtils = ChromeUtils.importESModule("resource://gre/modules/IOUtils.sys.mjs").IOUtils;
+				if (typeof globalThis !== "undefined" && globalThis.IOUtils) {
+					IOUtilsModule = globalThis.IOUtils;
+				}
 			} catch (e) {
-				IOUtils = null;
+				IOUtilsModule = null;
+			}
+			if (!IOUtilsModule) {
+				try {
+					IOUtilsModule = ChromeUtils.importESModule("resource://gre/modules/IOUtils.sys.mjs").IOUtils;
+				} catch (e) {
+					IOUtilsModule = null;
+				}
 			}
 		}
-		return IOUtils;
+		if (!IOUtilsModule) throw new Error("Zotero IOUtils API is unavailable");
+		return IOUtilsModule;
 	}
 
 	function log(...args) {
@@ -283,21 +293,65 @@
 			if (body) {
 				if (body.headers) options.headers = body.headers;
 				if (body.payload !== undefined) options.body = body.payload;
+				if (Number.isFinite(body.timeout)) options.timeout = body.timeout;
 			}
-			const resp = await Zotero.HTTP.request(method, url, options);
-			return resp && typeof resp.response !== "undefined" ? resp.response : resp;
+			try {
+				const resp = await Zotero.HTTP.request(method, url, options);
+				const value = resp && typeof resp.response !== "undefined" ? resp.response : resp;
+				if (value === "" || value === null || value === undefined) return {};
+				if (typeof value === "string") {
+					try {
+						return JSON.parse(value);
+					} catch (e) {
+						throw this._makeRequestError(method, url, resp, "响应不是有效 JSON");
+					}
+				}
+				return value;
+			} catch (error) {
+				if (error && error.name === "HJFYRequestError") throw error;
+				throw this._makeRequestError(method, url, error, error && error.message ? error.message : "请求失败");
+			}
+		}
+
+		_makeRequestError(method, url, source, detail) {
+			const xhr = source && (source.xmlhttp || source.xhr || source.response);
+			const status = Number(source && source.status) || Number(xhr && xhr.status) || 0;
+			const contentType =
+				(source && source.contentType) ||
+				(xhr && typeof xhr.getResponseHeader === "function" && xhr.getResponseHeader("Content-Type")) ||
+				"unknown";
+			const raw =
+				(source && typeof source.responseText === "string" && source.responseText) ||
+				(xhr && typeof xhr.responseText === "string" && xhr.responseText) ||
+				"";
+			const excerpt = raw.replace(/\s+/g, " ").slice(0, 240);
+			const error = new Error(
+				`${method} ${url} 失败${status ? ` (HTTP ${status})` : ""}: ${detail}` +
+					` | Content-Type: ${contentType}${excerpt ? ` | 响应: ${excerpt}` : ""}`
+			);
+			error.name = "HJFYRequestError";
+			error.status = status;
+			error.contentType = contentType;
+			error.responseExcerpt = excerpt;
+			log("HTTP error", error.message);
+			return error;
 		}
 
 		async downloadToFile(url, destPath) {
 			log("download -> " + destPath);
-			const resp = await Zotero.HTTP.request("GET", url, {
-				useCookieService: true,
-				timeout: 180000,
-				responseType: "arraybuffer",
-				onProgress: (loaded, total) => {
-					if (total > 0 && this._onProgress) this._onProgress(loaded, total);
-				},
-			});
+			let resp;
+			try {
+				resp = await Zotero.HTTP.request("GET", url, {
+					useCookieService: true,
+					timeout: 180000,
+					responseType: "arraybuffer",
+					onProgress: (loaded, total) => {
+						if (total > 0 && this._onProgress) this._onProgress(loaded, total);
+					},
+				});
+			} catch (error) {
+				throw this._makeRequestError("GET", url, error, error && error.message ? error.message : "下载失败");
+			}
 			const bytes = new Uint8Array(resp.response);
 			await getIOUtils().write(destPath, bytes, { tmpPath: destPath + ".tmp" });
 			return destPath;
@@ -330,32 +384,45 @@
 				if (cleaned && cleaned.length > 0) {
 					await getIOUtils().write(destPath, cleaned, { tmpPath: destPath + ".tmp" });
 					log("纯净PDF: 已去除首页水印");
+				} else {
+					this.notify("纯净 PDF 处理不可用，已保留原始译文", "fail");
 				}
 			} catch (e) {
-				// 清理失败时沿用原文件, 不影响主流程
 				log("cleanPdf error", e);
+				this.notify("纯净 PDF 处理失败，已保留原始译文", "fail");
 			}
 			return destPath;
 		}
 
 		async _cleanPdfBytes(bytes) {
-			const lib =
-				(typeof globalThis !== "undefined" && globalThis.PDFLib) ||
-				(typeof PDFLib !== "undefined" ? PDFLib : null);
+			const lib = Zotero.HJFYVendor && Zotero.HJFYVendor.PDFLib;
 			if (!lib) {
 				log("PDFLib 未加载(纯净PDF 将跳过)");
 				return null;
 			}
-			const pakoLib =
-				(typeof globalThis !== "undefined" && globalThis.pako) ||
-				(typeof pako !== "undefined" ? pako : null);
-			const doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
-			// 水印是 hjfy 翻译管线的标记块: q /CPDFSTAMP BMC ... ET EMC Q
-			const RE_BLOCK = /q\s*\/CPDFSTAMP\s*BMC[\s\S]*?ET\s*EMC\s*Q\s*/;
+			const pakoLib = Zotero.HJFYVendor && Zotero.HJFYVendor.pako;
+			let doc;
+			try {
+				doc = await lib.PDFDocument.load(bytes, { updateMetadata: false });
+			} catch (error) {
+				const message = error && error.message ? error.message : String(error);
+				const isCrossRealmTypeError =
+					/`pdf` must be of type[\s\S]*`Uint8Array`[\s\S]*`ArrayBuffer`/.test(message) &&
+					bytes != null &&
+					typeof bytes.length === "number";
+				if (!isCrossRealmTypeError) throw error;
+				// IOUtils and the bundled pdf-lib can live in different JS globals in Zotero 9.
+				// Copy into this plugin global so pdf-lib's realm-sensitive instanceof check succeeds.
+				const normalized = Uint8Array.from(bytes);
+				log("纯净PDF: 已兼容跨域 Uint8Array");
+				doc = await lib.PDFDocument.load(normalized, { updateMetadata: false });
+			}
+			// Current translated PDFs mark the URL block as CPDFSTAMP.
+			const RE_BLOCK = /q\s*\/CPDFSTAMP\s+BMC[\s\S]*?EMC\s*Q\s*/g;
 			// 兜底: 无标记块时, 删除文本运算符里含 hjfy 域名的画字指令(不依赖位置)
 			const RE_HJFY_TJ = /\([^()\\]*?hjfy[^()\\]*?\)\s*Tj/g;
 			const RE_HJFY_ARRAY = /\[[^\]]*?hjfy[^\]]*?\]\s*TJ/g;
-			let removed = false;
+			let removedBlocks = 0;
 			const pageCount = doc.getPageCount();
 			for (let p = 0; p < pageCount; p++) {
 				const page = doc.getPage(p);
@@ -394,24 +461,40 @@
 						}
 					}
 					if (txt === null) txt = new TextDecoder("latin1").decode(raw);
-					let patched = txt.replace(RE_BLOCK, "");
+					let patched = txt.replace(RE_BLOCK, () => {
+						removedBlocks++;
+						return "";
+					});
 					patched = patched.replace(RE_HJFY_TJ, "");
 					patched = patched.replace(RE_HJFY_ARRAY, "");
 					if (patched !== txt) {
 						const enc = Uint8Array.from(patched, (c) => c.charCodeAt(0) & 0xff);
 						s.contents = new Uint8Array(compressed && pakoLib ? pakoLib.deflate(enc) : enc);
 						s.dict.set(lib.PDFName.of("Length"), lib.PDFNumber.of(s.contents.length));
-						removed = true;
+					}
+				}
+				const annotations = page.node.Annots();
+				if (annotations && typeof annotations.size === "function") {
+					for (let index = annotations.size() - 1; index >= 0; index--) {
+						try {
+							const annotation = annotations.lookup(index);
+							const action = annotation && annotation.lookup(lib.PDFName.of("A"));
+							const uri = action && action.lookup(lib.PDFName.of("URI"));
+							const text = uri && typeof uri.decodeText === "function" ? uri.decodeText() : "";
+							if (/^https?:\/\/(?:www\.)?hjfy\.top\//i.test(text)) annotations.remove(index);
+						} catch (e) {
+							/* malformed annotation; preserve it */
+						}
 					}
 				}
 			}
-			if (!removed) {
-				// 最后手段: 第1页顶部覆盖白色条带(只对"第1页顶部水印"这一已知布局有效, 非保底保证)
-				log("未检测到可删除的水印文本, 使用白色条带兜底(非保底保证)");
-				const page = doc.getPage(0);
-				const { width, height } = page.getSize();
-				page.drawRectangle({ x: 0, y: height - 22, width, height: 22, color: lib.rgb(1, 1, 1) });
-			}
+			// Public pdf-lib drawing APIs are reliably serialized in Zotero. Keep this
+			// visual guard even when the internal stream replacement above succeeded.
+			const firstPage = doc.getPage(0);
+			const { width, height } = firstPage.getSize();
+			firstPage.drawRectangle({ x: 0, y: height - 22, width, height: 22, color: lib.rgb(1, 1, 1), opacity: 1 });
+			doc.setProducer("HJFY-PDFTranslate");
+			log("纯净PDF: CPDFSTAMP blocks removed", removedBlocks);
 			const out = await doc.save({ useObjectStreams: false });
 			return new Uint8Array(out);
 		}
@@ -434,31 +517,88 @@
 
 		async addPdfCNAttachment(item, filePath) {
 			const title = this._attachmentTitle();
-			await Zotero.DB.executeTransaction(async () => {
-				for (const a of await this._findExistingPdfCN(item)) {
-					await a.eraseTx();
-				}
-				const attachment = await Zotero.Attachments.importFromFile({
-					file: filePath,
-					parentItemID: item.id,
-				});
-				attachment.setField("title", title);
-				await attachment.saveTx();
+			const existing = await this._findExistingPdfCN(item);
+			// importFromFile manages its own transaction in Zotero 9/10. Wrapping it
+			// in executeTransaction deadlocks while the nested transaction waits.
+			const attachment = await Zotero.Attachments.importFromFile({
+				file: filePath,
+				parentItemID: item.id,
 			});
+			attachment.setField("title", title);
+			await attachment.saveTx();
+			for (const oldAttachment of existing) {
+				await oldAttachment.eraseTx();
+			}
 			return true;
 		}
 
 		async getItemPdfPath(item) {
-			for (const id of item.getAttachments() || []) {
+			const attachmentIDs = item.getAttachments() || [];
+			if (!attachmentIDs.length) {
+				throw new Error("该条目没有附件，请先把原始 PDF 添加到条目后再上传");
+			}
+			let attachmentCount = 0;
+			let pdfCount = 0;
+			for (const id of attachmentIDs) {
 				const child = Zotero.Items.get(id);
 				if (!child || !child.isAttachment()) continue;
-				if (child.attachmentContentType !== "application/pdf") continue;
-				const p = await child.getFilePathAsync();
-				if (p) {
-					return { path: p, fileName: child.getField("filename") || "paper.pdf" };
+				attachmentCount++;
+				const fileName = child.getField("filename") || child.attachmentFilename || "";
+				let filePath = null;
+				try {
+					filePath = await child.getFilePathAsync();
+				} catch (e) {
+					log("读取附件路径失败", id, e);
 				}
+				let isPdf = child.attachmentContentType === "application/pdf" || /\.pdf$/i.test(fileName);
+				if (!isPdf && typeof child.isPDFAttachment === "function") {
+					try {
+						isPdf = !!child.isPDFAttachment();
+					} catch (e) {
+						/* fall through to the file extension check */
+					}
+				}
+				if (!isPdf && filePath) isPdf = /\.pdf$/i.test(filePath);
+				if (!isPdf) continue;
+				pdfCount++;
+				if (filePath) return { path: filePath, fileName: fileName || filePath.split(/[\\/]/).pop() || "paper.pdf" };
 			}
-			return null;
+			log("未找到可上传 PDF", { attachmentCount, pdfCount });
+			if (!attachmentCount) throw new Error("该条目没有可上传的文件附件");
+			if (!pdfCount) throw new Error("该条目没有 PDF 附件，请先添加原始 PDF");
+			throw new Error("PDF 附件没有本地文件，请先下载或同步该附件");
+		}
+
+		_joinPath(basePath, fileName) {
+			const base = basePath && typeof basePath.path === "string" ? basePath.path : String(basePath);
+			try {
+				if (typeof PathUtils !== "undefined" && PathUtils && typeof PathUtils.join === "function") {
+					return PathUtils.join(base, fileName);
+				}
+			} catch (e) {
+				/* PathUtils is unavailable in older Zotero versions */
+			}
+			const separator = base.includes("\\") ? "\\" : "/";
+			return base.replace(/[\\/]+$/, "") + separator + String(fileName).replace(/^[\\/]+/, "");
+		}
+
+		async _downloadArxivFile(arxivId, files, destination, pitem) {
+			try {
+				return { path: await this.downloadToFile(files.zhCN, destination), url: files.zhCN, files };
+			} catch (error) {
+				if (!error || error.status !== 403) throw error;
+				pitem.setText("下载地址已过期，正在刷新...");
+				log("arxiv download URL expired; refreshing arxivFiles", arxivId);
+				const refreshed = await this.api.arxivFiles(arxivId);
+				if (!refreshed || refreshed.status !== 0 || !refreshed.data || !refreshed.data.zhCN) {
+					throw new Error("翻译文件地址刷新失败: " + HJFYCore.responseExcerpt(refreshed));
+				}
+				return {
+					path: await this.downloadToFile(refreshed.data.zhCN, destination),
+					url: refreshed.data.zhCN,
+					files: refreshed.data,
+				};
+			}
 		}
 
 		// ================= 流程入口 =================
@@ -474,7 +614,9 @@
 				} catch (e) {
 					continue;
 				}
-				if (item.isCollection()) continue;
+				// The item context menu only contains Zotero.Item objects. Zotero.Item
+				// has no isCollection() method, so validate the item by the API used below.
+				if (!item || typeof item.getField !== "function") continue;
 				try {
 					await this.handleItem(item);
 				} catch (e) {
@@ -544,6 +686,11 @@
 					this.notify(`「${arxivId}」的翻译还没开始，需要登录后才能创建任务。请在 设置→HJFY-PDFTranslate 完成登录`, "fail");
 					return null;
 				}
+				if (result.stage === "not_started") {
+					this._endProgress(pw);
+					this.notify(`「${arxivId}」尚未创建翻译任务；账号已登录，请稍后重试或在 hjfy.top 发起翻译`, "fail");
+					return null;
+				}
 				if (result.stage === "no_src") {
 					this._endProgress(pw);
 					this.notify(`${arxivId} 没有 LaTeX 源码，无法翻译`, "fail");
@@ -554,25 +701,29 @@
 					this.notify(`${arxivId} 翻译${result.stage === "fault" ? "编译失败" : "失败"}`, "fail");
 					return null;
 				}
-				if (["info_error", "api_error", "http_error"].includes(result.stage)) {
+				if (["info_error", "api_error", "http_error", "timeout"].includes(result.stage)) {
 					this._endProgress(pw);
 					this.notify("查询失败: " + (result.msg || result.stage), "fail");
 					return null;
 				}
 
-				const files = result.files || {};
+				let files = result.files || {};
 				if (!files.zhCN) {
 					this._endProgress(pw);
 					this.notify("未获得翻译文件地址", "fail");
 					return null;
 				}
 				const fileName = `hjfy-${(result.plainId || arxivId).replace(/[^\w.\-]/g, "_")}-zh-CN.pdf`;
-				const saved = await this.downloadToFile(
-					files.zhCN,
-					Zotero.File.pathJoin(Zotero.getTempDirectory(), fileName)
+				const download = await this._downloadArxivFile(
+					result.plainId || arxivId,
+					files,
+					this._joinPath(Zotero.getTempDirectory(), fileName),
+					pitem
 				);
+				const saved = download.path;
+				files = download.files;
 				// 纯净PDF: 去除译文第1页顶部的水印链接(视觉效果)
-				await this._maybeCleanPdf(saved, files.zhCN);
+				await this._maybeCleanPdf(saved, download.url);
 				pitem.setText("写入附件...");
 				await this.addPdfCNAttachment(item, saved);
 				this._endProgress(pw);
@@ -660,7 +811,7 @@
 				const ext = isPdf ? ".pdf" : ".md";
 				const saved = await this.downloadToFile(
 					files.zhCN,
-					Zotero.File.pathJoin(Zotero.getTempDirectory(), `hjfy-upload-${Date.now()}${ext}`)
+					this._joinPath(Zotero.getTempDirectory(), `hjfy-upload-${Date.now()}${ext}`)
 				);
 				// 纯净PDF: 上传翻译产物若为 PDF 同样去除首页水印
 				await this._maybeCleanPdf(saved, files.zhCN);
@@ -681,6 +832,12 @@
 		/** 手动构造 multipart/form-data 上传 PDF (field: file / fileName) */
 		async uploadFile(pdf) {
 			const fileBytes = await getIOUtils().read(pdf.path);
+			if (!fileBytes || fileBytes.length < 5) throw new Error("PDF 文件为空或无法读取");
+			if (fileBytes.length > 10 * 1024 * 1024) throw new Error("PDF 文件超过网站允许的 10 MB 上限");
+			const signature = String.fromCharCode(
+				fileBytes[0], fileBytes[1], fileBytes[2], fileBytes[3], fileBytes[4]
+			);
+			if (signature !== "%PDF-") throw new Error("所选附件不是有效的 PDF 文件");
 			const boundary =
 				"----HJFYBoundary" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 			const enc = new TextEncoder();
@@ -698,22 +855,27 @@
 			body.set(fileBytes, head.length);
 			body.set(tail, head.length + fileBytes.length);
 
-			const resp = await Zotero.HTTP.request("POST", `${BASE}/api/uploadFiles`, {
-				useCookieService: true,
-				timeout: 120000,
-				responseType: "json",
+			log("upload start", { fileName: safeName, bytes: fileBytes.length });
+			const response = await this.api.uploadFiles({
 				headers: { "Content-Type": `multipart/form-data; boundary=${boundary}` },
-				body: body.buffer, // ArrayBuffer
+				payload: body.buffer,
+				timeout: 120000,
 			});
-			return resp && typeof resp.response !== "undefined" ? resp.response : resp;
+			log("upload response", {
+				status: response && response.status,
+				message: response && response.msg,
+				hasFileKey: !!(response && (response.fileKey || (response.data && response.data.fileKey))),
+				arxivId: response && response.arxivId,
+			});
+			return response;
 		}
 
 		// ================= UI: 进度与通知 =================
 		_newProgress(text) {
 			const pw = new Zotero.ProgressWindow();
+			pw.changeHeadline("幻觉翻译");
 			const pitem = new pw.ItemProgress("chrome://zotero/skin/treeitem-load.png", text || "处理中...");
 			pw.show();
-			pw.startCloseTimer(3000);
 			return { pw, pitem };
 		}
 
@@ -730,12 +892,15 @@
 		notify(msg, type, sticky) {
 			try {
 				const pw = new Zotero.ProgressWindow();
-				pw.changeHeadline("HJFY-PDFTranslate");
-				pw.addLines([msg]);
-				if (type === "success") pw.ItemProgress("chrome://zotero/skin/tick.png", "");
-				else if (type === "fail") pw.ItemProgress("chrome://zotero/skin/cross.png", "");
-				if (!sticky) pw.startCloseTimer(5000);
+				pw.changeHeadline("幻觉翻译");
+				const icon = type === "success"
+					? "chrome://zotero/skin/tick.png"
+					: type === "fail"
+						? "chrome://zotero/skin/cross.png"
+						: "chrome://zotero/skin/treeitem-load.png";
+				new pw.ItemProgress(icon, String(msg || ""));
 				pw.show();
+				if (!sticky) pw.startCloseTimer(5000);
 			} catch (e) {
 				log("notify error", e);
 			}
