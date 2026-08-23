@@ -1,0 +1,160 @@
+#hjfy-main {
+	box-sizing: border-box;
+	width: 100%;
+	max-width: 680px;
+	min-width: 0;
+	padding: 4px 0 28px;
+	font-size: 13px;
+	line-height: 1.55;
+}
+
+.hjfy-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 22px;
+}
+
+.hjfy-brand {
+	font-size: 20px;
+	font-weight: 650;
+}
+
+.hjfy-status {
+	flex: none;
+	padding: 3px 9px;
+	border-radius: 999px;
+	background: rgba(127, 127, 127, .12);
+	color: GrayText;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.hjfy-status[data-state="success"] {
+	background: rgba(30, 126, 71, .12);
+	color: #18733c;
+}
+
+.hjfy-status[data-state="error"] {
+	background: rgba(190, 42, 42, .11);
+	color: #ad2525;
+}
+
+.hjfy-section {
+	padding: 18px 0 22px;
+	border-top: 1px solid rgba(127, 127, 127, .25);
+}
+
+.hjfy-section-title {
+	margin: 0 0 16px;
+	font-size: 14px;
+	font-weight: 650;
+}
+
+.hjfy-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.hjfy-actions-wrap {
+	flex-wrap: wrap;
+}
+
+#hjfy-main button {
+	box-sizing: border-box;
+	min-height: 31px;
+	padding: 4px 12px;
+	font: inherit;
+}
+
+#hjfy-main .hjfy-primary {
+	font-weight: 600;
+}
+
+.hjfy-method-label {
+	margin: 22px 0 11px;
+	font-weight: 600;
+}
+
+.hjfy-phone-form {
+	display: grid;
+	grid-template-columns: 58px minmax(180px, 300px) max-content;
+	align-items: center;
+	column-gap: 12px;
+	row-gap: 12px;
+}
+
+#hjfy-main input[type="text"],
+#hjfy-main input[type="tel"] {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	height: 32px;
+	padding: 5px 8px;
+	font: inherit;
+}
+
+.hjfy-inline-status {
+	grid-column: 2 / 4;
+	min-height: 18px;
+	color: GrayText;
+	font-size: 12px;
+}
+
+.hjfy-advanced {
+	margin-top: 22px;
+}
+
+.hjfy-advanced summary {
+	cursor: pointer;
+	color: GrayText;
+	font-weight: 600;
+}
+
+#hjfy-main textarea {
+	box-sizing: border-box;
+	width: 100%;
+	min-height: 72px;
+	margin: 12px 0 10px;
+	padding: 8px;
+	resize: vertical;
+	font-family: monospace;
+}
+
+.hjfy-account-footer {
+	margin-top: 22px;
+}
+
+.hjfy-check-row {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 32px;
+	cursor: pointer;
+}
+
+.hjfy-check-row input {
+	flex: none;
+	margin: 0;
+}
+
+@media (max-width: 560px) {
+	.hjfy-header {
+		align-items: flex-start;
+	}
+
+	.hjfy-phone-form {
+		grid-template-columns: minmax(0, 1fr) max-content;
+	}
+
+	.hjfy-phone-form > label {
+		grid-column: 1 / -1;
+		margin-bottom: -6px;
+	}
+
+	.hjfy-inline-status {
+		grid-column: 1 / -1;
+	}
+}
