@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "HJFY-PDFTranslate",
-  "version": "0.1.10",
+  "version": "1.0",
   "description": "幻觉翻译Zotero插件",
   "author": "hjfy-pdftranslate",
   "icons": {

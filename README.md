@@ -56,7 +56,7 @@
 
 ### 1️⃣ 安装插件
 
-1. 拿到插件包 `hjfy-pdftranslate-0.1.10.xpi`（仓库 Release 或 Actions Artifact 里下载，找不到就问维护者要）。
+1. 拿到插件包 `hjfy-pdftranslate-1.0.xpi`（仓库 Release 或本地构建产物里下载，找不到就问维护者要）。
 2. 打开 Zotero → 菜单 **工具 → 插件**。
 3. 点右上角 **齿轮 ⚙ → Install Plugin From File...**，选这个 `.xpi`。
 4. **重启 Zotero**。完成后，右键任意条目，菜单里会出现 **「获取幻觉翻译PDF」**。
@@ -132,7 +132,7 @@ Zotero → **编辑/设置 → 高级 → HJFY-PDFTranslate**，选择一种登�
 - **接口与流程细节**：见 [docs/hjfy_top_使用文档.md](./docs/hjfy_top_使用文档.md)（逆向分析 + 全链路说明）。
 - **开发调试工具**：仓库 `tools/` 下提供了流程模拟器、微信扫码登录调试脚本、qrconnect 状态机及单测，便于复现与排查。
 - **在线构建**：本仓库已配置 GitHub Actions，push/PR 自动打 `.xpi` 构建产物，打 `v*` 标签自动发 Release。
-- 本地构建：`zip -rq hjfy-pdftranslate-0.1.10.xpi manifest.json chrome.manifest bootstrap.js content locale icon.png`
+- 本地构建：`zip -rq hjfy-pdftranslate-1.0.xpi manifest.json chrome.manifest bootstrap.js content locale icon.png icon@2x.png`
 
 ## 致谢
 
