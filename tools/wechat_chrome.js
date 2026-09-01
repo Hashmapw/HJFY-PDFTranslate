@@ -20,13 +20,13 @@ const {
 	isScanned,
 	isTerminalFailure,
 } = require("./wechat_qr_state");
+const LOGIN = require("../content/scripts/login_config");
 
 const PORT = 9333;
-const APPID = "wxd7885e86e52192fe";
 const REDIRECT = encodeURIComponent("https://hjfy.top/api/login/callback/wechat?path=%2F");
 const QR_URL =
-	`https://open.weixin.qq.com/connect/qrconnect?appid=${APPID}&scope=snsapi_login` +
-	`&redirect_uri=${REDIRECT}&state=HJFYTEST&login_type=jssdk&self_redirect=false`;
+	`https://open.weixin.qq.com/connect/qrconnect?appid=${LOGIN.APP_ID}&scope=snsapi_login` +
+		`&redirect_uri=${REDIRECT}&state=${LOGIN.STATE}&login_type=jssdk&self_redirect=false`;
 const QR_OUT = path.join(__dirname, "wechat-login-qr.png");
 const WAIT_MIN = parseInt(process.argv[2] || "10", 10);
 
@@ -141,7 +141,7 @@ async function main() {
 		const lastParam = scanned ? "&last=404" : "";
 		const text = await evalJs(
 			cdp,
-			`fetch('https://lp.open.weixin.qq.com/connect/l/qrconnect?uuid=${uuid}${lastParam}&_='+Date.now()).then(r=>r.text())`,
+			`fetch('${LOGIN.POLL_BASE}/connect/l/qrconnect?uuid=${uuid}${lastParam}&_='+Date.now()).then(r=>r.text())`,
 			true
 		);
 		if (!text) continue;
@@ -236,7 +236,7 @@ async function tryFinishAfterTerminal(cdp, href, preSession) {
 async function completeLogin(cdp, wxCode, preSession) {
 	// 在浏览器内导航到 hjfy.top 回调(与微信跳转一致), 让站点种 session cookie。
 	await cdp.send("Page.navigate", {
-		url: `https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=HJFYTEST`,
+		url: `https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=${LOGIN.STATE}`,
 	});
 	console.log("[5/5] 读取并验证 hjfy.top 会话 cookie");
 	const result = await waitForSession(cdp, preSession, 10000);

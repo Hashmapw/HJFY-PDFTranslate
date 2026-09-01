@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+	xmlns:html="http://www.w3.org/1999/xhtml"
+	id="hjfy-arxiv-dialog-window"
+	title="获取翻译 PDF"
+	windowtype="hjfy:arxiv-dialog"
+	orient="vertical">
+	<html:style><![CDATA[
+		#hjfy-arxiv-dialog-window {
+			min-width: 440px;
+			min-height: 250px;
+			background: Canvas;
+			color: CanvasText;
+		}
+		#hjfy-arxiv-dialog {
+			box-sizing: border-box;
+			display: flex;
+			flex-direction: column;
+			min-height: 100%;
+			padding: 20px 22px;
+			font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+		}
+		#hjfy-arxiv-title { margin: 0 0 6px; font-size: 18px; }
+		#hjfy-arxiv-description {
+			overflow-wrap: anywhere;
+			margin: 0 0 17px;
+			color: GrayText;
+		}
+		#hjfy-arxiv-label { margin-bottom: 7px; font-weight: 600; }
+		#hjfy-arxiv-input {
+			box-sizing: border-box;
+			width: 100%;
+			height: 34px;
+			padding: 5px 8px;
+			font: inherit;
+		}
+		#hjfy-arxiv-actions {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 9px;
+			margin-top: 18px;
+		}
+		#hjfy-arxiv-actions button { min-height: 31px; padding: 4px 13px; font: inherit; }
+	]]></html:style>
+	<html:div id="hjfy-arxiv-dialog">
+		<html:h1 id="hjfy-arxiv-title">获取翻译 PDF</html:h1>
+		<html:p id="hjfy-arxiv-description">当前条目没有 arXiv 链接</html:p>
+		<html:label id="hjfy-arxiv-label" for="hjfy-arxiv-input">arXiv 链接或 ID</html:label>
+		<html:input id="hjfy-arxiv-input" type="text" placeholder="2506.17310"/>
+		<html:div id="hjfy-arxiv-actions">
+			<html:button id="hjfy-arxiv-fetch" type="button">获取翻译</html:button>
+			<html:button id="hjfy-arxiv-upload" type="button">上传 PDF</html:button>
+			<html:button id="hjfy-arxiv-cancel" type="button">取消</html:button>
+		</html:div>
+	</html:div>
+</window>

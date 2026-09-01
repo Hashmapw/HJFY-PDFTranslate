@@ -20,13 +20,13 @@ const {
 	isScanned,
 	isTerminalFailure,
 } = require("./wechat_qr_state");
+const LOGIN = require("../content/scripts/login_config");
 
 const PORT = 9333;
-const APPID = "wxd7885e86e52192fe";
 const REDIRECT = encodeURIComponent("https://hjfy.top/api/login/callback/wechat?path=%2F");
 const QR_URL =
-	`https://open.weixin.qq.com/connect/qrconnect?appid=${APPID}&scope=snsapi_login` +
-	`&redirect_uri=${REDIRECT}&state=HJFYTEST&login_type=jssdk&self_redirect=false`;
+	`https://open.weixin.qq.com/connect/qrconnect?appid=${LOGIN.APP_ID}&scope=snsapi_login` +
+		`&redirect_uri=${REDIRECT}&state=${LOGIN.STATE}&login_type=jssdk&self_redirect=false`;
 const QR_OUT = path.join(__dirname, "wechat-login-qr.png");
 const WAIT_MIN = parseInt(process.argv[2] || "15", 10);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -153,14 +153,14 @@ async function main() {
 		// 检测B: 用浏览器 cookie 从外部轮询 lp 接口
 		try {
 			const cks = await cdp.send("Network.getCookies", {
-				urls: ["https://open.weixin.qq.com/", "https://lp.open.weixin.qq.com/"],
+				urls: ["https://open.weixin.qq.com/", LOGIN.POLL_BASE + "/"],
 			});
 			const cookieStr = (cks.cookies || [])
 				.map((c) => `${c.name}=${c.value}`)
 				.join("; ");
 			const lastParam = scanned ? "&last=404" : "";
 			const r = await httpGet(
-				`https://lp.open.weixin.qq.com/connect/l/qrconnect?uuid=${uuid}${lastParam}&_=${Date.now()}000`,
+				`${LOGIN.POLL_BASE}/connect/l/qrconnect?uuid=${uuid}${lastParam}&_=${Date.now()}000`,
 				cookieStr
 			);
 			const poll = parsePollResponse(r.body || "");
@@ -255,7 +255,7 @@ async function finishLogin(cdp, wxCode, preSession, callbackHref = "") {
 	if (wxCode) {
 		console.log("[4/4] 导航到回调完成登录");
 		await cdp.send("Page.navigate", {
-			url: `https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=HJFYTEST`,
+			url: `https://hjfy.top/api/login/callback/wechat?code=${encodeURIComponent(wxCode)}&state=${LOGIN.STATE}`,
 		});
 		await sleep(500);
 	}
