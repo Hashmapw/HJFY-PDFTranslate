@@ -77,10 +77,15 @@ test("unregisters the menu during shutdown", () => {
 	assert.deepEqual(unregistrations, ["hjfy-pdftranslate-fetch-cn"]);
 });
 
-test("bootstrap starts with the Services global provided by Zotero 8", () => {
+test("bootstrap starts with the Services global provided by Zotero 8", async () => {
 	const loadedScripts = [];
 	const Zotero = { debug() {}, HJFY: null };
 	class Plugin {
+		constructor(rootURI, services) {
+			this.rootURI = rootURI;
+			this.services = services;
+		}
+
 		init() {
 			this.initialized = true;
 		}
@@ -103,8 +108,9 @@ test("bootstrap starts with the Services global provided by Zotero 8", () => {
 	};
 	const source = fs.readFileSync(path.join(__dirname, "../bootstrap.js"), "utf8");
 	vm.runInNewContext(source, context);
-	context.startup({ id: "hjfy-pdftranslate@hjfy.top", version: "0.1.0", rootURI: "file:///addon/" });
+	await context.startup({ id: "hjfy-pdftranslate@hjfy.top", version: "0.1.0", rootURI: "file:///addon/" });
 
 	assert.equal(loadedScripts.length, 4);
 	assert.equal(Zotero.HJFY.initialized, true);
+	assert.equal(Zotero.HJFY.services, context.Services);
 });
