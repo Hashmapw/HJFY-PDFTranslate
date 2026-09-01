@@ -10,6 +10,10 @@
 	const SITE = "hjfy.top";
 	const BASE = "https://hjfy.top";
 	const VERSION_FALLBACK = true;
+	const PLUGIN_ID = "hjfy-pdftranslate@hjfy.top";
+	const MENU_ID = "hjfy-pdftranslate-fetch-cn";
+	const MENU_ELEMENT_ID = "hjfy-pdftranslate-fetchcn";
+	const MENU_FTL = "hjfy-pdftranslate.ftl";
 
 	let Services = null;
 	function getServices() {
@@ -47,6 +51,7 @@
 			this.rootURI = rootURI;
 			this.api = HJFYCore.createApi((method, url, body) => this._request(method, url, body));
 			this._onProgress = null;
+			this._menuRegistrationID = null;
 		}
 
 		// ================= 生命周期 =================
@@ -60,11 +65,27 @@
 			}
 		}
 
-		onMainWindowLoad(win) {}
+		onMainWindowLoad(win) {
+			this._prepareMenuWindow(win);
+		}
 
-		onMainWindowUnload(win) {}
+		onMainWindowUnload(win) {
+			this._removeMenuFromWindow(win);
+		}
 
-		shutdown() {}
+		shutdown() {
+			if (this._menuRegistrationID && Zotero.MenuManager) {
+				try {
+					Zotero.MenuManager.unregisterMenu(this._menuRegistrationID);
+				} catch (e) {
+					log("menu unregister error", e);
+				}
+			}
+			this._menuRegistrationID = null;
+			for (const win of Zotero.getMainWindows()) {
+				this._removeMenuFromWindow(win);
+			}
+		}
 
 		// ================= 会话 (session cookie) =================
 		getSessionPref() {
@@ -607,33 +628,84 @@
 
 		// ================= 右键菜单 =================
 		_registerMenu() {
-			Zotero.ItemTreeManager.register({
-				type: "menu",
-				name: "hjfy-pdftranslate.fetchCN",
-				onMenuPopup: (menu) => {
-					try {
-						const items = Zotero.getActiveZoteroPane().getSelectedItems();
-						menu.disabled = !items || items.length === 0;
-						menu.hidden = !items || items.length === 0;
-					} catch (e) {
-						menu.disabled = true;
-					}
-				},
-				onCommand: (command, selectedItems) => {
-					const items =
-						selectedItems && selectedItems.length
-							? selectedItems
-							: Zotero.getActiveZoteroPane().getSelectedItems();
-					this.handleSelectedItems(items);
-				},
-			});
+			for (const win of Zotero.getMainWindows()) {
+				this._prepareMenuWindow(win);
+			}
+
+			if (Zotero.MenuManager && typeof Zotero.MenuManager.registerMenu === "function") {
+				this._menuRegistrationID = Zotero.MenuManager.registerMenu({
+					menuID: MENU_ID,
+					pluginID: PLUGIN_ID,
+					target: "main/library/item",
+					menus: [
+						{
+							menuType: "menuitem",
+							l10nID: "hjfy-pdftranslate-menu-fetch-cn",
+							onShowing: (_event, context) => {
+								const hasItems = !!(context.items && context.items.length);
+								context.setVisible(hasItems);
+								context.setEnabled(hasItems);
+							},
+							onCommand: (_event, context) => {
+								this.handleSelectedItems(context.items || []);
+							},
+						},
+					],
+				});
+			}
 			log("menu registered");
+		}
+
+		_prepareMenuWindow(win) {
+			if (!win || !win.document) return;
+			if (win.MozXULElement && !win.document.querySelector(`[href="${MENU_FTL}"]`)) {
+				win.MozXULElement.insertFTLIfNeeded(MENU_FTL);
+			}
+			if (!Zotero.MenuManager || typeof Zotero.MenuManager.registerMenu !== "function") {
+				this._addMenuToWindow(win);
+			}
+		}
+
+		_addMenuToWindow(win) {
+			const doc = win.document;
+			const popup = doc.getElementById("zotero-itemmenu");
+			if (!popup || doc.getElementById(MENU_ELEMENT_ID)) return;
+
+			const menuitem = doc.createXULElement("menuitem");
+			menuitem.id = MENU_ELEMENT_ID;
+			menuitem.setAttribute("data-l10n-id", "hjfy-pdftranslate-menu-fetch-cn");
+			menuitem.addEventListener("command", () => {
+				const items = win.ZoteroPane ? win.ZoteroPane.getSelectedItems() : [];
+				this.handleSelectedItems(items);
+			});
+			popup.appendChild(menuitem);
+
+			const onPopupShowing = () => {
+				const items = win.ZoteroPane ? win.ZoteroPane.getSelectedItems() : [];
+				menuitem.hidden = !items.length;
+				menuitem.disabled = !items.length;
+			};
+			popup.addEventListener("popupshowing", onPopupShowing);
+			menuitem._hjfyPopup = popup;
+			menuitem._hjfyPopupShowing = onPopupShowing;
+		}
+
+		_removeMenuFromWindow(win) {
+			if (!win || !win.document) return;
+			const menuitem = win.document.getElementById(MENU_ELEMENT_ID);
+			if (menuitem) {
+				if (menuitem._hjfyPopup && menuitem._hjfyPopupShowing) {
+					menuitem._hjfyPopup.removeEventListener("popupshowing", menuitem._hjfyPopupShowing);
+				}
+				menuitem.remove();
+			}
+			win.document.querySelector(`[href="${MENU_FTL}"]`)?.remove();
 		}
 
 		// ================= 设置面板 =================
 		_registerPrefsPane() {
 			Zotero.PreferencePanes.register({
-				pluginID: "hjfy-pdftranslate@hjfy.top",
+				pluginID: PLUGIN_ID,
 				src: this.rootURI + "content/preferences/preferences.xhtml",
 				label: "HJFY-PDFTranslate",
 				image: this.rootURI + "content/resources/logo.png", // 设置界面左侧图标
