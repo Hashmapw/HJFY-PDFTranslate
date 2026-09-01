@@ -1,12 +1,10 @@
 /*
  * HJFY-PDFTranslate / content/scripts/core.js
- * 纯逻辑层：arXiv ID 解析 + hjfy.top API 封装 + 翻译流程编排。
- * 不依赖 Zotero：通过注入的 requestFn 发请求，可在 Node 里直接测试。
- * （Zotero 环境由 plugin.js 注入基于 Zotero.HTTP 的 requestFn）
+ * Pure logic: arXiv parsing, validated hjfy.top API contracts, and polling flows.
  */
 (function (root, factory) {
 	if (typeof module !== "undefined" && module.exports) {
-		module.exports = factory(); // Node 测试
+		module.exports = factory();
 	} else {
 		root.HJFYCore = factory();
 	}
@@ -14,162 +12,263 @@
 	"use strict";
 
 	const BASE = "https://hjfy.top";
+	const TASK_STATES = Object.freeze(["init", "start", "processing", "finished", "failed", "error", "fault"]);
+	const TERMINAL_FAIL = new Set(["failed", "error", "fault"]);
+	const SLEEP = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-	// ---------------- arXiv ID 解析 ----------------
-	// 新式: 2506.17310 / 2506.17310v2 / 2506.17310.pdf
-	const RE_NEW = /^(\d{4}\.\d{4,5})(?:v\d+)?(?:\.pdf)?$/;
-	// 旧式: cs.LG/2506.17310 / cs/0501001 / cs/0501001v1
-	const RE_OLD = /^([a-zA-Z][a-zA-Z.\-]*\/\d{4,7})(?:v\d+)?(?:\.pdf)?$/;
-	// URL: arxiv.org / alphaxiv.org 的 abs|pdf 页面
-	const RE_URL =
-		/https?:\/\/(?:www\.)?(?:arxiv|alphaxiv)\.org\/(?:abs|pdf)\/([a-zA-Z0-9.\-\/]+?)(?:v\d+)?(?:\.pdf)?\/?$/i;
-
-	function parseArxivId(input) {
-		if (!input) return null;
-		let s = String(input).trim();
-		let m = RE_URL.exec(s);
-		if (m) return m[1].replace(/\/$/, "");
-		// 兜底: 从 URL 末尾取一段
-		if (/^https?:/i.test(s)) {
-			s = s.replace(/\/$/, "").split("/").pop();
+	class ContractError extends Error {
+		constructor(endpoint, detail, response) {
+			const excerpt = responseExcerpt(response);
+			super(`${endpoint} 接口契约不匹配: ${detail}${excerpt ? ` | 响应: ${excerpt}` : ""}`);
+			this.name = "HJFYContractError";
+			this.endpoint = endpoint;
+			this.responseExcerpt = excerpt;
 		}
-		if (RE_NEW.test(s)) return s;
-		m = RE_OLD.exec(s);
-		if (m) return m[1];
+	}
+
+	function responseExcerpt(value) {
+		if (value === undefined || value === null) return "";
+		let text;
+		try {
+			text = typeof value === "string" ? value : JSON.stringify(value);
+		} catch (e) {
+			text = String(value);
+		}
+		return text.replace(/\s+/g, " ").slice(0, 240);
+	}
+
+	function normalizeArxivId(value) {
+		let candidate = String(value || "").trim().replace(/^arxiv:/i, "");
+		candidate = candidate.replace(/[?#].*$/, "").replace(/\/$/, "").replace(/\.pdf$/i, "");
+		const modern = /^(\d{4}\.\d{4,5})(v\d+)?$/i.exec(candidate);
+		if (modern) return modern[1] + (modern[2] || "");
+		const legacy = /^([a-z][a-z.\-]*\/\d{4,7})(v\d+)?$/i.exec(candidate);
+		if (legacy) return legacy[1] + (legacy[2] || "");
 		return null;
 	}
 
-	// ---------------- API 对象 ----------------
-	// requestFn(method, url, body?) -> Promise<JSON>
+	function parseArxivId(input) {
+		if (!input) return null;
+		const source = String(input).trim();
+		if (/^https?:\/\//i.test(source)) {
+			try {
+				const parsed = new URL(source);
+				const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+				if (!["arxiv.org", "export.arxiv.org", "alphaxiv.org"].includes(host)) return null;
+				const match = /^\/(?:abs|pdf)\/(.+?)\/?$/i.exec(parsed.pathname);
+				return match ? normalizeArxivId(decodeURIComponent(match[1])) : null;
+			} catch (e) {
+				return null;
+			}
+		}
+		return normalizeArxivId(source);
+	}
+
+	function validateEnvelope(endpoint, response, validateData) {
+		if (!response || typeof response !== "object" || Array.isArray(response)) {
+			throw new ContractError(endpoint, "响应不是 JSON 对象", response);
+		}
+		if (!Number.isFinite(response.status)) {
+			throw new ContractError(endpoint, "缺少数值 status", response);
+		}
+		if (response.status !== 0) return response;
+		if (!response.data || typeof response.data !== "object" || Array.isArray(response.data)) {
+			throw new ContractError(endpoint, "status=0 但缺少 data 对象", response);
+		}
+		validateData(response.data, response);
+		return response;
+	}
+
+	function validateStatusResponse(endpoint, response, validateSuccess) {
+		if (!response || typeof response !== "object" || Array.isArray(response)) {
+			throw new ContractError(endpoint, "响应不是 JSON 对象", response);
+		}
+		if (!Number.isFinite(response.status)) {
+			throw new ContractError(endpoint, "缺少数值 status", response);
+		}
+		if (response.status === 0 && validateSuccess) validateSuccess(response);
+		return response;
+	}
+
+	function requireField(endpoint, data, field, type, response) {
+		if (typeof data[field] !== type) {
+			throw new ContractError(endpoint, `data.${field} 应为 ${type}`, response);
+		}
+	}
+
 	function createApi(requestFn) {
-		const get = (url) => requestFn("GET", url);
+		if (typeof requestFn !== "function") throw new TypeError("requestFn must be a function");
+		const call = async (endpoint, method, path, body, validator) => {
+			const response = await requestFn(method, BASE + path, body);
+			return validator(response, endpoint);
+		};
+		const envelope = (dataValidator) => (response, endpoint) =>
+			validateEnvelope(endpoint, response, (data) => dataValidator(endpoint, data, response));
+		const statusValidator = envelope((endpoint, data, response) => {
+			requireField(endpoint, data, "status", "string", response);
+			if (!TASK_STATES.includes(data.status)) {
+				throw new ContractError(endpoint, `未知任务状态 ${data.status}`, response);
+			}
+		});
+		const filesValidator = envelope((endpoint, data, response) => {
+			requireField(endpoint, data, "zhCN", "string", response);
+		});
+
 		return {
-			// 论文元数据: {status:0, data:{hasSrc, meta}}
-			arxivInfo: (id) => get(`${BASE}/api/arxivInfo/${encodeURIComponent(id)}`),
-			// 任务状态: {status:0, data:{status,info}} | {status:101,msg:"required login"}
-			arxivStatus: (id) => get(`${BASE}/api/arxivStatus/${encodeURIComponent(id)}`),
-			// 文件直链: {status:0, data:{id,title,origin,zhCN,zhCNTar,isDeepSeek}}
-			arxivFiles: (id) => get(`${BASE}/api/arxivFiles/${encodeURIComponent(id)}`),
-			// 上传文档任务
-			fileStatus: (key) => get(`${BASE}/api/fileStatus/${encodeURIComponent(key)}`),
-			fileFiles: (key) => get(`${BASE}/api/fileFiles/${encodeURIComponent(key)}`),
-			// 上传 PDF: body 由调用方构造 multipart (field: file)
-			uploadFiles: (body) => requestFn("POST", `${BASE}/api/uploadFiles`, body),
-			// 登录态: {login:bool, nickname}
-			userinfo: () => get(`${BASE}/api/userinfo`),
+			arxivInfo: (id) => call("arxivInfo", "GET", `/api/arxivInfo/${encodeURIComponent(id)}`, null,
+				envelope((endpoint, data, response) => requireField(endpoint, data, "hasSrc", "boolean", response))),
+			arxivStatus: (id) => call("arxivStatus", "GET", `/api/arxivStatus/${encodeURIComponent(id)}`, null, statusValidator),
+			arxivFiles: (id) => call("arxivFiles", "GET", `/api/arxivFiles/${encodeURIComponent(id)}`, null, filesValidator),
+			fileStatus: (key) => call("fileStatus", "GET", `/api/fileStatus/${encodeURIComponent(key)}`, null, statusValidator),
+			fileFiles: (key) => call("fileFiles", "GET", `/api/fileFiles/${encodeURIComponent(key)}`, null, filesValidator),
+			uploadFiles: (body) => call("uploadFiles", "POST", "/api/uploadFiles", body, (response, endpoint) => {
+				const validated = validateStatusResponse(endpoint, response, (success) => {
+					const fileKey = success.fileKey || (success.data && success.data.fileKey);
+					if (typeof success.arxivId !== "string" && typeof fileKey !== "string") {
+						throw new ContractError(endpoint, "成功响应缺少 fileKey 或 arxivId", success);
+					}
+				});
+				if (validated.status === 302 && typeof validated.arxivId !== "string") {
+					throw new ContractError(endpoint, "status=302 但缺少 arxivId", validated);
+				}
+				return validated;
+			}),
+			sendCode: (phone, captchaVerifyParam) => call("sendCode", "POST", "/api/sendCode", {
+				headers: { "Content-Type": "application/json" },
+				payload: JSON.stringify({ phone, captchaVerifyParam }),
+			}, (response, endpoint) => validateStatusResponse(endpoint, response)),
+			phoneLogin: (phone, code) => call("phoneLogin", "POST", "/api/phoneLogin", {
+				headers: { "Content-Type": "application/json" },
+				payload: JSON.stringify({ phone, code }),
+			}, (response, endpoint) => validateStatusResponse(endpoint, response, (success) => {
+				if (!success.data || typeof success.data.session !== "string") {
+					throw new ContractError(endpoint, "成功响应缺少 data.session", success);
+				}
+			})),
+			logout: () => call("logout", "POST", "/api/logout", null,
+				(response, endpoint) => validateStatusResponse(endpoint, response)),
+			userinfo: () => call("userinfo", "GET", "/api/userinfo", null, (response, endpoint) => {
+				if (!response || typeof response !== "object" || typeof response.login !== "boolean") {
+					throw new ContractError(endpoint, "缺少布尔 login", response);
+				}
+				return response;
+			}),
 		};
 	}
 
-	// ---------------- 流程编排 ----------------
-	// 统一状态: init/start/processing/finished/failed/error/fault
-	// status:101 -> need_login
-	const TERMINAL_FAIL = ["failed", "error", "fault"];
-	const SLEEP = (ms) => new Promise((res) => setTimeout(res, ms));
-
-	/**
-	 * arXiv 翻译流程: info -> status(轮询) -> files
-	 * @returns {Promise<{stage:string, msg?:string, data?:object, files?:object}>}
-	 *   stage: info_error | no_src | need_login | finished | finished_via_plain |
-	 *          failed | error | fault | init | start | processing
-	 */
 	async function flowArxiv(api, arxivId, opts) {
-		const o = opts || {};
-		const pollInterval = o.pollInterval || 10000;
-
+		const options = opts || {};
 		const info = await api.arxivInfo(arxivId);
-		if (!info || info.status !== 0) return { stage: "info_error", msg: (info && info.msg) || "arxivInfo 查询失败" };
-		if (!info.data || !info.data.hasSrc) {
+		if (info.status !== 0) return { stage: "info_error", msg: info.msg || responseExcerpt(info) };
+		if (!info.data.hasSrc) {
 			return { stage: "no_src", msg: "该论文没有提供 LaTeX 源码，无法翻译", data: info.data };
 		}
 
-		// 101(未登录/未建任务)时: 若带版本号, 先查无版本号任务是否已完成
-		const onNeedLogin = async () => {
-			const plain = arxivId.replace(/v\d+$/, "");
-			if (plain === arxivId) return null;
-			const alt = await api.arxivStatus(plain);
-			if (alt && alt.status === 0 && alt.data && alt.data.status === "finished") {
-				return { stage: "finished_via_plain", plainId: plain, files: (await api.arxivFiles(plain)).data };
+		const onStatus101 = async () => {
+			if (options.allowVersionFallback !== false) {
+				const plain = arxivId.replace(/v\d+$/i, "");
+				if (plain !== arxivId) {
+					const alternate = await api.arxivStatus(plain);
+					if (alternate.status === 0 && alternate.data.status === "finished") {
+						return { stage: "finished_via_plain", plainId: plain, files: (await api.arxivFiles(plain)).data };
+					}
+				}
+			}
+			const user = await api.userinfo();
+			if (user.login) {
+				return { stage: "not_started", msg: "账号已登录，但服务端尚未创建该论文的翻译任务" };
 			}
 			return null;
 		};
 
-		return await pollStatus(() => api.arxivStatus(arxivId), {
-			pollInterval,
-			onStatus: o.onStatus,
-			wait: o.wait,
+		return pollStatus(() => api.arxivStatus(arxivId), {
+			pollInterval: options.pollInterval || 10000,
+			maxWaitMs: options.maxWaitMs,
+			onStatus: options.onStatus,
+			wait: options.wait,
 			onFinished: async () => api.arxivFiles(arxivId),
-			onFailed: o.onFailed,
-			onNeedLogin: o.allowVersionFallback !== false ? onNeedLogin : null,
-			fallbackCheck: async (status) => {
-				// 带版本号失败时, 查无版本号任务是否已完成
-				const plain = arxivId.replace(/v\d+$/, "");
+			onFailed: options.onFailed,
+			onStatus101,
+			fallbackCheck: async () => {
+				const plain = arxivId.replace(/v\d+$/i, "");
 				if (plain === arxivId) return null;
-				const alt = await api.arxivStatus(plain);
-				if (alt && alt.status === 0 && alt.data && alt.data.status === "finished") {
-					return { altStatus: alt.data, plain, files: await api.arxivFiles(plain) };
+				const alternate = await api.arxivStatus(plain);
+				if (alternate.status === 0 && alternate.data.status === "finished") {
+					return { altStatus: alternate.data, plain, files: await api.arxivFiles(plain) };
 				}
 				return null;
 			},
 		});
 	}
 
-	/**
-	 * 上传文档翻译流程: 轮询 fileStatus -> fileFiles
-	 */
 	async function flowFile(api, fileKey, opts) {
-		return await pollStatus(() => api.fileStatus(fileKey), {
-			pollInterval: (opts && opts.pollInterval) || 10000,
-			onStatus: opts && opts.onStatus,
-			wait: opts && opts.wait,
+		const options = opts || {};
+		return pollStatus(() => api.fileStatus(fileKey), {
+			pollInterval: options.pollInterval || 10000,
+			maxWaitMs: options.maxWaitMs,
+			onStatus: options.onStatus,
+			wait: options.wait,
 			onFinished: async () => api.fileFiles(fileKey),
-			onFailed: opts && opts.onFailed,
+			onFailed: options.onFailed,
 		});
 	}
 
-	/**
-	 * 通用任务轮询器
-	 */
 	async function pollStatus(fetchStatus, ctx) {
+		const startedAt = Date.now();
+		const maxWaitMs = Number.isFinite(ctx.maxWaitMs) ? ctx.maxWaitMs : 15 * 60 * 1000;
 		for (;;) {
-			const st = await fetchStatus();
-			if (!st) return { stage: "http_error", msg: "网络请求失败" };
-			if (st.status === 101) {
-				if (ctx.onNeedLogin) {
-					const fb = await ctx.onNeedLogin();
-					if (fb) return fb;
+			const statusResponse = await fetchStatus();
+			if (!statusResponse) return { stage: "http_error", msg: "网络请求失败" };
+			if (statusResponse.status === 101) {
+				if (ctx.onStatus101) {
+					const resolved = await ctx.onStatus101(statusResponse);
+					if (resolved) return resolved;
 				}
-				return { stage: "need_login", msg: st.msg || "需要登录" };
+				return { stage: "need_login", msg: statusResponse.msg || "需要登录" };
 			}
-			if (st.status !== 0) return { stage: "api_error", msg: JSON.stringify(st) };
+			if (statusResponse.status !== 0) {
+				return { stage: "api_error", msg: responseExcerpt(statusResponse) };
+			}
 
-			const data = st.data || {};
-			const s = data.status || "";
-			if (ctx.onStatus) ctx.onStatus(s, data);
-			ctx.lastStatus = data;
-
-			if (s === "finished") {
+			const data = statusResponse.data;
+			const state = data.status;
+			if (ctx.onStatus) ctx.onStatus(state, data);
+			if (state === "finished") {
 				const files = await ctx.onFinished();
-				return { stage: "finished", data, files: files && files.data ? files.data : files };
+				return { stage: "finished", data, files: files.data || files };
 			}
-			if (TERMINAL_FAIL.includes(s)) {
+			if (TERMINAL_FAIL.has(state)) {
 				if (ctx.fallbackCheck) {
-					const fb = await ctx.fallbackCheck(data);
-					if (fb) return { stage: "finished_via_plain", alt: fb.altStatus, files: fb.files ? fb.files.data : fb.files, plainId: fb.plain };
+					const fallback = await ctx.fallbackCheck(data);
+					if (fallback) {
+						return {
+							stage: "finished_via_plain",
+							alt: fallback.altStatus,
+							files: fallback.files.data || fallback.files,
+							plainId: fallback.plain,
+						};
+					}
 				}
-				if (ctx.onFailed) ctx.onFailed(s, data);
-				return { stage: s, data };
+				if (ctx.onFailed) ctx.onFailed(state, data);
+				return { stage: state, data };
 			}
-			// init/start/processing
-			if (!ctx.wait) return { stage: s, data };
+			if (!ctx.wait) return { stage: state, data };
+			if (Date.now() - startedAt >= maxWaitMs) {
+				return { stage: "timeout", msg: `等待翻译超过 ${Math.round(maxWaitMs / 60000)} 分钟`, data };
+			}
 			await SLEEP(ctx.pollInterval);
 		}
 	}
 
 	return {
 		BASE,
+		TASK_STATES,
+		ContractError,
+		responseExcerpt,
 		parseArxivId,
 		createApi,
 		flowArxiv,
 		flowFile,
+		pollStatus,
 	};
 });

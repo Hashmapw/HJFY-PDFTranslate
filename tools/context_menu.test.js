@@ -96,6 +96,8 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 			scriptloader: {
 				loadSubScript(url) {
 					loadedScripts.push(url);
+					if (url.endsWith("pdf-lib.min.js")) context.PDFLib = {};
+					if (url.endsWith("pako.min.js")) context.pako = {};
 					if (url.endsWith("content/scripts/plugin.js")) Zotero.HJFYPlugin = Plugin;
 				},
 			},
@@ -111,6 +113,7 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 	await context.startup({ id: "hjfy-pdftranslate@hjfy.top", version: "0.1.0", rootURI: "file:///addon/" });
 
 	assert.equal(loadedScripts.length, 4);
+	assert.deepEqual(Object.keys(Zotero.HJFYVendor).sort(), ["PDFLib", "pako"]);
 	assert.equal(Zotero.HJFY.initialized, true);
 	assert.equal(Zotero.HJFY.services, context.Services);
 });
