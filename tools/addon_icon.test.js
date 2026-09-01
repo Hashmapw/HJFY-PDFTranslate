@@ -20,8 +20,8 @@ test("manifest icon sizes match the actual PNG dimensions", () => {
 	const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8"));
 
 	assert.deepEqual(manifest.icons, {
-		48: "icon.png",
-		96: "icon@2x.png",
+		48: "content/resources/logo-48-padded.png",
+		96: "content/resources/logo-96-padded.png",
 	});
 	assert.deepEqual(readPngSize(manifest.icons[48]), { width: 48, height: 48 });
 	assert.deepEqual(readPngSize(manifest.icons[96]), { width: 96, height: 96 });

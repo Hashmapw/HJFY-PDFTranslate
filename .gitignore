@@ -1,6 +1,6 @@
-# 构建产物(版本化 xpi 允许提交, 供自动更新)
+# 构建产物由 GitHub Release 托管，不提交仓库
 *.xpi
-!hjfy-pdftranslate-*.xpi
+dist/
 # 测试/登录中间产物
 tools/wechat-login-qr.*
 tools/sim-*.pdf

@@ -33,7 +33,7 @@ function loadPlugin(overrides = {}) {
 		IOUtils: overrides.IOUtils,
 		clearTimeout,
 		setTimeout,
-		TextDecoder,
+		TextDecoder: overrides.TextDecoder || TextDecoder,
 		TextEncoder,
 		console,
 	};
@@ -159,6 +159,76 @@ test("writes downloads with Zotero 9 and 10 global IOUtils", async () => {
 	assert.equal(writes[0].path, "/tmp/file.pdf");
 	assert.deepEqual(writes[0].bytes, [37, 80, 68, 70]);
 	assert.equal(writes[0].options.tmpPath, "/tmp/file.pdf.tmp");
+});
+
+test("limits arxivInfo to three retries without changing other API requests", async () => {
+	const requests = [];
+	const HTTP = {
+		async request(method, url, options) {
+			requests.push({ method, url, options });
+			return { response: { status: 0, data: {} } };
+		},
+	};
+	const { Plugin } = loadPlugin({ HTTP });
+	const plugin = new Plugin("file:///addon/");
+
+	await plugin._request("GET", "https://hjfy.top/api/arxivInfo/2405.14867");
+	await plugin._request("GET", "https://hjfy.top/api/arxivStatus/2405.14867");
+
+	assert.equal(requests[0].options.timeout, 10000);
+	const retryIntervals = Array.from(requests[0].options.errorDelayIntervals);
+	assert.deepEqual(retryIntervals, [2500, 5000, 10000]);
+	assert.equal(requests[0].options.errorDelayMax, 20000);
+	const worstCaseMs = requests[0].options.timeout * (retryIntervals.length + 1)
+		+ retryIntervals.reduce((total, delay) => total + delay, 0);
+	assert.equal(worstCaseMs, 57500);
+	assert.ok(worstCaseMs < 60000);
+	assert.equal(requests[1].options.timeout, 60000);
+	assert.equal(requests[1].options.errorDelayIntervals, undefined);
+	assert.equal(requests[1].options.errorDelayMax, undefined);
+});
+
+test("falls back from a JSON XHR error without reading responseText", async () => {
+	let responseTextReads = 0;
+	const jsonXHR = {
+		status: 500,
+		responseType: "json",
+		response: { status: 500, msg: "upstream socket closed" },
+		get responseText() {
+			responseTextReads++;
+			throw new Error('responseText is only available if responseType is "" or "text"');
+		},
+		getResponseHeader(name) {
+			return name === "Content-Type" ? "application/json;charset=utf-8" : null;
+		},
+	};
+	const HTTP = {
+		async request(_method, url) {
+			if (url.includes("/api/arxivInfo/")) {
+				const error = new Error("HTTP 500");
+				error.status = 500;
+				error.xmlhttp = jsonXHR;
+				throw error;
+			}
+			if (url.includes("/api/arxivStatus/")) {
+				return { response: { status: 0, data: { status: "finished" } } };
+			}
+			if (url.includes("/api/arxivFiles/")) {
+				return { response: { status: 0, data: { zhCN: "https://example.com/translated.pdf" } } };
+			}
+			throw new Error("unexpected URL: " + url);
+		},
+	};
+	const { Plugin } = loadPlugin({ HTTP });
+	const plugin = new Plugin("file:///addon/");
+	const api = HJFYCore.createApi((method, url, body) => plugin._request(method, url, body));
+
+	const result = await HJFYCore.flowArxiv(api, "2405.14867", {});
+
+	assert.equal(responseTextReads, 0);
+	assert.equal(result.stage, "finished");
+	assert.equal(result.infoFallback, true);
+	assert.equal(result.files.zhCN, "https://example.com/translated.pdf");
 });
 
 test("imports PDF-CN without nesting Zotero attachment transactions", async () => {
@@ -578,6 +648,67 @@ test("removes the marked HJFY URL and replaces URL producer metadata", async () 
 		decoded += new TextDecoder("latin1").decode(bytes);
 	}
 	assert.doesNotMatch(decoded, /hjfy\.top\/arxiv\/2602\.09021/);
+});
+
+test("preserves high-bit PDF glyph codes when Gecko treats latin1 as Windows-1252", async () => {
+	const PDFLib = require("../content/scripts/vendor/pdf-lib.min.js");
+	const pako = require("../content/scripts/vendor/pako.min.js");
+	const glyphBytes = Uint8Array.from([
+		0x80, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88,
+		0x89, 0x8a, 0x8b, 0x8c, 0x8e, 0x91, 0x92, 0x93,
+		0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b,
+		0x9c, 0x9e, 0x9f,
+	]);
+	const prefix = new TextEncoder().encode("BT /F0 10 Tf(");
+	const suffix = new TextEncoder().encode(
+		")Tj ET\nq/CPDFSTAMP BMC BT /F0 10 Tf(https://hjfy.top/arxiv/2311.18828)Tj ET EMC Q"
+	);
+	const content = new Uint8Array(prefix.length + glyphBytes.length + suffix.length);
+	content.set(prefix);
+	content.set(glyphBytes, prefix.length);
+	content.set(suffix, prefix.length + glyphBytes.length);
+
+	const source = await PDFLib.PDFDocument.create();
+	const page = source.addPage([612, 792]);
+	page.node.addContentStream(source.context.register(source.context.flateStream(content)));
+	const input = await source.save({ useObjectStreams: false });
+
+	const windows1252 = new Map([
+		[0x80, 0x20ac], [0x82, 0x201a], [0x83, 0x0192], [0x84, 0x201e], [0x85, 0x2026],
+		[0x86, 0x2020], [0x87, 0x2021], [0x88, 0x02c6], [0x89, 0x2030], [0x8a, 0x0160],
+		[0x8b, 0x2039], [0x8c, 0x0152], [0x8e, 0x017d], [0x91, 0x2018], [0x92, 0x2019],
+		[0x93, 0x201c], [0x94, 0x201d], [0x95, 0x2022], [0x96, 0x2013], [0x97, 0x2014],
+		[0x98, 0x02dc], [0x99, 0x2122], [0x9a, 0x0161], [0x9b, 0x203a], [0x9c, 0x0153],
+		[0x9e, 0x017e], [0x9f, 0x0178],
+	]);
+	class GeckoTextDecoder {
+		decode(bytes) {
+			return Array.from(bytes, (byte) => String.fromCodePoint(windows1252.get(byte) || byte)).join("");
+		}
+	}
+
+	const { Plugin } = loadPlugin({ HJFYVendor: { PDFLib, pako }, TextDecoder: GeckoTextDecoder });
+	const output = await new Plugin("file:///addon/")._cleanPdfBytes(input);
+	const cleaned = await PDFLib.PDFDocument.load(Buffer.from(output), { updateMetadata: false });
+	const streams = cleaned.getPage(0).node.Contents();
+	let preserved = false;
+	for (let index = 0; index < streams.size(); index++) {
+		const stream = streams.lookup(index);
+		let bytes = new Uint8Array(stream.contents);
+		try {
+			bytes = pako.inflate(bytes);
+		} catch (e) {
+			/* pdf-lib's white rectangle stream is not compressed */
+		}
+		for (let offset = 0; offset <= bytes.length - glyphBytes.length; offset++) {
+			if (glyphBytes.every((byte, glyphIndex) => bytes[offset + glyphIndex] === byte)) {
+				preserved = true;
+				break;
+			}
+		}
+	}
+
+	assert.equal(preserved, true);
 });
 
 test("normalizes IOUtils bytes after pdf-lib rejects a cross-realm Uint8Array", async () => {

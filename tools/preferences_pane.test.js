@@ -94,3 +94,14 @@ test("preference layout keeps styles inside the pane", () => {
 	assert.match(source, /id="hjfy-wechat-login"[\s\S]*id="hjfy-phone-login"[\s\S]*id="hjfy-logout"/);
 	assert.doesNotMatch(source, /hjfy-phone-form|hjfy-advanced/);
 });
+
+test("manifest uses padded icons at their declared sizes", () => {
+	const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "../manifest.json"), "utf8"));
+	assert.equal(manifest.description, "幻觉翻译Zotero插件");
+	for (const [size, relativePath] of Object.entries(manifest.icons)) {
+		const png = fs.readFileSync(path.join(__dirname, "..", relativePath));
+		assert.equal(png.toString("ascii", 1, 4), "PNG");
+		assert.equal(png.readUInt32BE(16), Number(size));
+		assert.equal(png.readUInt32BE(20), Number(size));
+	}
+});
