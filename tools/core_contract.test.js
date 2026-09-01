@@ -46,6 +46,67 @@ test("distinguishes status 101 for logged-in and logged-out users", async () => 
 	assert.equal((await Core.flowArxiv(makeApi(true), "2602.09021", {})).stage, "not_started");
 });
 
+test("falls back to finished task files when arxivInfo returns HTTP 5xx", async () => {
+	const calls = [];
+	const requestError = new Error("upstream socket closed");
+	requestError.name = "HJFYRequestError";
+	requestError.status = 500;
+	let observedError = null;
+	const result = await Core.flowArxiv({
+		arxivInfo: async () => {
+			calls.push("info");
+			throw requestError;
+		},
+		arxivStatus: async () => {
+			calls.push("status");
+			return { status: 0, data: { status: "finished" } };
+		},
+		arxivFiles: async () => {
+			calls.push("files");
+			return { status: 0, data: { zhCN: "https://example.com/translated.pdf" } };
+		},
+	}, "2405.14867", {
+		onInfoError: (error) => {
+			observedError = error;
+		},
+	});
+
+	assert.equal(result.stage, "finished");
+	assert.equal(result.infoFallback, true);
+	assert.equal(result.files.zhCN, "https://example.com/translated.pdf");
+	assert.equal(observedError, requestError);
+	assert.deepEqual(calls, ["info", "status", "files"]);
+});
+
+test("falls back when arxivInfo returns a server-error envelope", async () => {
+	const result = await Core.flowArxiv({
+		arxivInfo: async () => ({ status: 500, msg: "upstream unavailable" }),
+		arxivStatus: async () => ({ status: 0, data: { status: "finished" } }),
+		arxivFiles: async () => ({ status: 0, data: { zhCN: "https://example.com/translated.pdf" } }),
+	}, "2311.18828", {});
+
+	assert.equal(result.stage, "finished");
+	assert.equal(result.infoFallback, true);
+});
+
+test("does not hide non-server arxivInfo failures", async () => {
+	const requestError = new Error("not authorized");
+	requestError.name = "HJFYRequestError";
+	requestError.status = 401;
+	let statusCalled = false;
+	await assert.rejects(
+		Core.flowArxiv({
+			arxivInfo: async () => { throw requestError; },
+			arxivStatus: async () => {
+				statusCalled = true;
+				return { status: 0, data: { status: "finished" } };
+			},
+		}, "2405.14867", {}),
+		(error) => error === requestError
+	);
+	assert.equal(statusCalled, false);
+});
+
 test("polling has a total timeout", async () => {
 	const result = await Core.pollStatus(
 		async () => ({ status: 0, data: { status: "processing" } }),

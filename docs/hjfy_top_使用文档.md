@@ -1,6 +1,6 @@
 # hjfy.top 接口契约与维护说明
 
-本文面向插件维护者。接口来自对 hjfy.top 前端与实际请求的观察，不是官方开放 API，服务端可能随时调整。本文最后校验日期为 2026-08-22；实现以 `content/scripts/core.js` 和浏览器 Network 面板为准。
+本文面向插件维护者。接口来自对 hjfy.top 前端与实际请求的观察，不是官方开放 API，服务端可能随时调整。本文最后校验日期为 2026-08-28；实现以 `content/scripts/core.js` 和浏览器 Network 面板为准。
 
 ## 1. 插件实际使用的接口
 
@@ -34,6 +34,10 @@ init | start | processing | finished | failed | error | fault
 - `failed`、`error`、`fault`：终止；带版本号的 ID 会再查询一次无版本号 ID。
 - `init`、`start`、`processing`：每 10 秒轮询，最多等待 15 分钟。
 - 未知状态：视为接口契约变更，保留响应摘录并停止，不无限轮询。
+
+`arxivInfo` 是源码能力检查，但不应阻断已经完成的翻译。若该接口发生网络错误或返回 HTTP/业务 5xx，插件会降级查询 `arxivStatus`；任务为 `finished` 时直接调用 `arxivFiles` 下载。HTTP 5xx 会按 2.5、5、10 秒最多重试 3 次，累计退避 17.5 秒；单次请求超时为 10 秒，因此最坏路径控制在约 1 分钟内。4xx、响应契约错误及明确的无源码结果仍会终止，避免掩盖登录或服务改版问题。
+
+错误请求使用 `responseType: json` 时，响应摘录从 `XMLHttpRequest.response` 序列化，不读取仅适用于文本响应的 `responseText`，防止错误处理过程覆盖原始 HTTP 状态并阻断降级。
 
 `arxivStatus` 的 `status: 101` 存在二义性。插件先检查无版本号任务，再调用 `userinfo`：
 

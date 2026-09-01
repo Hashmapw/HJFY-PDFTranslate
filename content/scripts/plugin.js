@@ -10,6 +10,9 @@
 	const SITE = "hjfy.top";
 	const BASE = "https://hjfy.top";
 	const VERSION_FALLBACK = true;
+	const ARXIV_INFO_RETRY_INTERVALS = Object.freeze([2500, 5000, 10000]);
+	const ARXIV_INFO_RETRY_MAX_MS = 20000;
+	const ARXIV_INFO_TIMEOUT_MS = 10000;
 	const PLUGIN_ID = "hjfy-pdftranslate@hjfy.top";
 	const MENU_ID = "hjfy-pdftranslate-fetch-cn";
 	const MENU_ELEMENT_ID = "hjfy-pdftranslate-fetchcn";
@@ -216,6 +219,45 @@
 		);
 	}
 
+	function getResponseBodyText(candidate) {
+		if (!candidate) return "";
+		try {
+			const responseType = candidate.responseType;
+			if (!responseType || responseType === "text") {
+				const responseText = candidate.responseText;
+				if (typeof responseText === "string") return responseText;
+			}
+		} catch (e) {
+			/* Some XMLHttpRequest getters throw for non-text response types. */
+		}
+		try {
+			const response = candidate.response;
+			if (typeof response === "string") return response;
+			const tag = Object.prototype.toString.call(response);
+			if (tag === "[object Object]" || tag === "[object Array]") return JSON.stringify(response);
+		} catch (e) {
+			/* Error reporting must never replace the original request failure. */
+		}
+		return "";
+	}
+
+	function bytesToBinaryString(bytes) {
+		const chunkSize = 0x4000;
+		let output = "";
+		for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+			output += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+		}
+		return output;
+	}
+
+	function binaryStringToBytes(value) {
+		const output = new Uint8Array(value.length);
+		for (let index = 0; index < value.length; index++) {
+			output[index] = value.charCodeAt(index) & 0xff;
+		}
+		return output;
+	}
+
 	class HJFYPlugin {
 		constructor(rootURI, services) {
 			if (services) ServicesModule = services;
@@ -364,6 +406,11 @@
 				responseType: "json",
 				successCodes: [200, 201, 204, 302],
 			};
+			if (method === "GET" && String(url).startsWith(`${BASE}/api/arxivInfo/`)) {
+				options.timeout = ARXIV_INFO_TIMEOUT_MS;
+				options.errorDelayIntervals = Array.from(ARXIV_INFO_RETRY_INTERVALS);
+				options.errorDelayMax = ARXIV_INFO_RETRY_MAX_MS;
+			}
 			if (body) {
 				if (body.headers) options.headers = body.headers;
 				if (body.payload !== undefined) options.body = body.payload;
@@ -390,14 +437,15 @@
 		_makeRequestError(method, url, source, detail) {
 			const xhr = source && (source.xmlhttp || source.xhr || source.response);
 			const status = Number(source && source.status) || Number(xhr && xhr.status) || 0;
-			const contentType =
-				(source && source.contentType) ||
-				(xhr && typeof xhr.getResponseHeader === "function" && xhr.getResponseHeader("Content-Type")) ||
-				"unknown";
-			const raw =
-				(source && typeof source.responseText === "string" && source.responseText) ||
-				(xhr && typeof xhr.responseText === "string" && xhr.responseText) ||
-				"";
+			let contentType = (source && source.contentType) || "unknown";
+			if (contentType === "unknown" && xhr && typeof xhr.getResponseHeader === "function") {
+				try {
+					contentType = xhr.getResponseHeader("Content-Type") || contentType;
+				} catch (e) {
+					/* Header access is best-effort while reporting a failed request. */
+				}
+			}
+			const raw = getResponseBodyText(source) || (xhr !== source ? getResponseBodyText(xhr) : "");
 			const excerpt = raw.replace(/\s+/g, " ").slice(0, 240);
 			const error = new Error(
 				`${method} ${url} 失败${status ? ` (HTTP ${status})` : ""}: ${detail}` +
@@ -528,13 +576,13 @@
 					let compressed = false;
 					if (pakoLib) {
 						try {
-							txt = new TextDecoder("latin1").decode(pakoLib.inflate(raw));
+							txt = bytesToBinaryString(pakoLib.inflate(raw));
 							compressed = true;
 						} catch (e) {
 							txt = null;
 						}
 					}
-					if (txt === null) txt = new TextDecoder("latin1").decode(raw);
+					if (txt === null) txt = bytesToBinaryString(raw);
 					let patched = txt.replace(RE_BLOCK, () => {
 						removedBlocks++;
 						return "";
@@ -542,7 +590,7 @@
 					patched = patched.replace(RE_HJFY_TJ, "");
 					patched = patched.replace(RE_HJFY_ARRAY, "");
 					if (patched !== txt) {
-						const enc = Uint8Array.from(patched, (c) => c.charCodeAt(0) & 0xff);
+						const enc = binaryStringToBytes(patched);
 						s.contents = new Uint8Array(compressed && pakoLib ? pakoLib.deflate(enc) : enc);
 						s.dict.set(lib.PDFName.of("Length"), lib.PDFNumber.of(s.contents.length));
 					}
@@ -778,6 +826,15 @@
 					wait: true,
 					pollInterval: 10000,
 					allowVersionFallback: VERSION_FALLBACK,
+					onInfoError: (error) => {
+						const detail = error && error.message ? error.message : HJFYCore.responseExcerpt(error);
+						log("arxivInfo unavailable; falling back to task status", {
+							arxivId,
+							status: Number(error && error.status) || 0,
+							detail,
+						});
+						pitem.setText(`${arxivId} 信息接口异常，正在直接查询翻译任务...`);
+					},
 					onStatus: (status, data) => {
 						pitem.setText(`${arxivId}: ${status}${data.info ? " | " + data.info : ""}`);
 					},

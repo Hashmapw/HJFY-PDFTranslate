@@ -30,11 +30,22 @@
 		if (value === undefined || value === null) return "";
 		let text;
 		try {
-			text = typeof value === "string" ? value : JSON.stringify(value);
+			text = typeof value === "string"
+				? value
+				: value && typeof value.message === "string"
+					? value.message
+					: JSON.stringify(value);
 		} catch (e) {
 			text = String(value);
 		}
 		return text.replace(/\s+/g, " ").slice(0, 240);
+	}
+
+	function isArxivInfoAvailabilityError(value) {
+		if (!value || typeof value !== "object") return false;
+		const status = Number(value.status);
+		if (Number.isFinite(status) && status >= 500) return true;
+		return value.name === "HJFYRequestError" && status === 0;
 	}
 
 	function normalizeArxivId(value) {
@@ -158,11 +169,22 @@
 
 	async function flowArxiv(api, arxivId, opts) {
 		const options = opts || {};
-		const info = await api.arxivInfo(arxivId);
-		if (info.status !== 0) return { stage: "info_error", msg: info.msg || responseExcerpt(info) };
-		if (!info.data.hasSrc) {
-			return { stage: "no_src", msg: "该论文没有提供 LaTeX 源码，无法翻译", data: info.data };
+		let infoFailure = null;
+		try {
+			const info = await api.arxivInfo(arxivId);
+			if (info.status !== 0) {
+				if (!isArxivInfoAvailabilityError(info)) {
+					return { stage: "info_error", msg: info.msg || responseExcerpt(info) };
+				}
+				infoFailure = info;
+			} else if (!info.data.hasSrc) {
+				return { stage: "no_src", msg: "该论文没有提供 LaTeX 源码，无法翻译", data: info.data };
+			}
+		} catch (error) {
+			if (!isArxivInfoAvailabilityError(error)) throw error;
+			infoFailure = error;
 		}
+		if (infoFailure && options.onInfoError) options.onInfoError(infoFailure);
 
 		const onStatus101 = async () => {
 			if (options.allowVersionFallback !== false) {
@@ -181,7 +203,7 @@
 			return null;
 		};
 
-		return pollStatus(() => api.arxivStatus(arxivId), {
+		const result = await pollStatus(() => api.arxivStatus(arxivId), {
 			pollInterval: options.pollInterval || 10000,
 			maxWaitMs: options.maxWaitMs,
 			onStatus: options.onStatus,
@@ -199,6 +221,7 @@
 				return null;
 			},
 		});
+		return infoFailure ? Object.assign({}, result, { infoFallback: true }) : result;
 	}
 
 	async function flowFile(api, fileKey, opts) {
