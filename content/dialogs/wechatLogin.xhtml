@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+	xmlns:html="http://www.w3.org/1999/xhtml"
+	id="hjfy-wechat-login-window"
+	title="微信扫码登录"
+	windowtype="hjfy:wechat-login"
+	orient="vertical">
+	<html:style><![CDATA[
+		#hjfy-wechat-login-window {
+			min-width: 390px;
+			min-height: 400px;
+			background: Canvas;
+			color: CanvasText;
+		}
+		#hjfy-wechat-dialog {
+			box-sizing: border-box;
+			display: flex;
+			flex-direction: column;
+			min-height: 100%;
+			padding: 16px 18px 14px;
+			font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+			background: Canvas;
+			color: CanvasText;
+		}
+		#hjfy-wechat-title { margin: 0 0 4px; font-size: 17px; }
+		#hjfy-wechat-description { margin: 0 0 10px; color: GrayText; }
+		#hjfy-wechat-stage {
+			display: grid;
+			place-items: center;
+			box-sizing: border-box;
+			height: 280px;
+			border: 1px solid rgba(127, 127, 127, .3);
+			background: Canvas;
+		}
+		#hjfy-wechat-qr {
+			display: block;
+			width: 260px;
+			height: 260px;
+			object-fit: contain;
+		}
+		#hjfy-wechat-footer {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+			gap: 12px;
+			margin-top: 10px;
+			background: Canvas;
+		}
+		#hjfy-wechat-status { color: GrayText; font-size: 12px; }
+		#hjfy-wechat-close { min-height: 31px; padding: 4px 14px; font: inherit; }
+	]]></html:style>
+	<html:div id="hjfy-wechat-dialog">
+		<html:h1 id="hjfy-wechat-title">微信扫码登录</html:h1>
+		<html:p id="hjfy-wechat-description">使用微信扫码并在手机上确认</html:p>
+		<html:div id="hjfy-wechat-stage">
+			<html:img id="hjfy-wechat-qr" alt="微信登录二维码" hidden="true"/>
+		</html:div>
+		<html:div id="hjfy-wechat-footer">
+			<html:span id="hjfy-wechat-status">二维码加载中...</html:span>
+			<html:button id="hjfy-wechat-close" type="button">关闭</html:button>
+		</html:div>
+	</html:div>
+</window>

@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
+const HJFYLoginConfig = require("../content/scripts/login_config");
 
 function loadPlugin(overrides = {}) {
 	const registrations = [];
@@ -26,6 +27,7 @@ function loadPlugin(overrides = {}) {
 	const context = {
 		Zotero,
 		HJFYCore: { createApi: () => ({}) },
+		HJFYLoginConfig,
 		ChromeUtils: {},
 		console,
 	};
@@ -92,12 +94,24 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 	}
 	const context = {
 		Zotero,
+		Components: {
+			classes: {
+				"@mozilla.org/addons/addon-manager-startup;1": {
+					getService() {
+						return { registerChrome: () => ({ destruct() {} }) };
+					},
+				},
+			},
+			interfaces: { amIAddonManagerStartup: {} },
+		},
 		Services: {
+			io: { newURI: (url) => url },
 			scriptloader: {
 				loadSubScript(url) {
 					loadedScripts.push(url);
 					if (url.endsWith("pdf-lib.min.js")) context.PDFLib = {};
 					if (url.endsWith("pako.min.js")) context.pako = {};
+					if (url.endsWith("content/scripts/login_config.js")) context.HJFYLoginConfig = {};
 					if (url.endsWith("content/scripts/plugin.js")) Zotero.HJFYPlugin = Plugin;
 				},
 			},
@@ -112,7 +126,8 @@ test("bootstrap starts with the Services global provided by Zotero 8", async () 
 	vm.runInNewContext(source, context);
 	await context.startup({ id: "hjfy-pdftranslate@hjfy.top", version: "0.1.0", rootURI: "file:///addon/" });
 
-	assert.equal(loadedScripts.length, 4);
+	assert.equal(loadedScripts.length, 5);
+	assert.ok(loadedScripts.some((url) => url.endsWith("content/scripts/login_config.js")));
 	assert.deepEqual(Object.keys(Zotero.HJFYVendor).sort(), ["PDFLib", "pako"]);
 	assert.equal(Zotero.HJFY.initialized, true);
 	assert.equal(Zotero.HJFY.services, context.Services);
