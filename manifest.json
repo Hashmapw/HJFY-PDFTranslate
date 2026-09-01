@@ -5,8 +5,8 @@
   "description": "自动获取 arXiv 中文翻译 PDF（hjfy.top）并作为 PDF-CN 附件挂到条目；支持登录会话保存，以及无网址条目输入 arXiv 链接或上传 PDF 翻译。",
   "author": "hjfy-pdftranslate",
   "icons": {
-    "48": "content/resources/logo-64.png",
-    "96": "content/resources/logo.png"
+    "48": "icon.png",
+    "96": "icon@2x.png"
   },
   "applications": {
     "zotero": {
