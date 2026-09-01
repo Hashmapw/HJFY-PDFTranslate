@@ -1,13 +1,19 @@
 {
-  "manifestVersion": 2,
+  "manifest_version": 2,
   "name": "HJFY-PDFTranslate",
   "version": "0.1.0",
   "description": "自动获取 arXiv 中文翻译 PDF（hjfy.top）并作为 PDF-CN 附件挂到条目；支持登录会话保存，以及无网址条目输入 arXiv 链接或上传 PDF 翻译。",
   "author": "hjfy-pdftranslate",
+  "icons": {
+    "48": "content/resources/logo-64.png",
+    "96": "content/resources/logo.png"
+  },
   "applications": {
     "zotero": {
       "id": "hjfy-pdftranslate@hjfy.top",
-      "strict_min_version": "7.0"
+      "update_url": "https://raw.githubusercontent.com/Hashmapw/HJFY-PDFTranslate/main/update.json",
+      "strict_min_version": "7.0",
+      "strict_max_version": "10.*"
     }
   }
 }

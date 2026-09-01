@@ -1,5 +1,6 @@
-# 构建产物
+# 构建产物(版本化 xpi 允许提交, 供自动更新)
 *.xpi
+!hjfy-pdftranslate-*.xpi
 # 测试/登录中间产物
 tools/wechat-login-qr.*
 tools/sim-*.pdf
